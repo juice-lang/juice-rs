@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+util_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+repo_dir="$(dirname "${util_dir}")"
+
+cd "${repo_dir}" || exit
+
+# generate CONTRIBUTORS.txt if it doesn't exist
+if [ ! -f CONTRIBUTORS.txt ]; then
+    touch CONTRIBUTORS.txt
+    printf "This is the list of individuals who have contributed source code to juice.\n\n" > CONTRIBUTORS.txt
+fi
+
+git log --pretty="%ae" | sort | uniq | {
+    while read -r email
+    do
+        if ! grep -q "${email}" CONTRIBUTORS.txt; then
+            name=$(git log -1 --author="${email}" --pretty="%an")
+            echo "- ${name} <${email}>" >> CONTRIBUTORS.txt
+        fi
+    done
+}
