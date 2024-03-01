@@ -1,14 +1,29 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use std::{
+    fmt::{self, Debug, Formatter},
+    io::Write,
+    path::PathBuf,
+};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum FrontendAction {
+    DumpParse,
+    DumpAst,
+    EmitIr,
+    EmitObject,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct FrontendArgs {
+    pub input_filepath: PathBuf,
+    pub output_stream: Box<dyn Write>,
+    pub action: FrontendAction,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Debug for FrontendArgs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FrontendArgs")
+            .field("input_filepath", &self.input_filepath)
+            .field("output_stream", &"Box<dyn Write>")
+            .field("action", &self.action)
+            .finish()
     }
 }
