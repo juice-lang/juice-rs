@@ -1,5 +1,6 @@
 mod error;
 mod runner;
+mod source_loc;
 mod source_manager;
 
 pub(crate) use crate::error::{Error, Result};
