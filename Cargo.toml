@@ -1,3 +1,6 @@
 [workspace]
 members = ["driver", "frontend"]
 resolver = "2"
+
+[workspace.dependencies]
+derive_more = "0.99.17"
