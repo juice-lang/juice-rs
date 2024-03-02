@@ -31,6 +31,7 @@ pub enum Error {
     },
     FileNotFound(PathBuf),
     FileNotRegular(PathBuf),
+    FileHasNoName(PathBuf),
     LinkerOutputToStdout,
     ObjectToStdout,
     Unexpected,

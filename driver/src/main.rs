@@ -48,6 +48,7 @@ async fn main() {
                 format!("couldn't read {}: no such file or directory\n", path.display())
             }
             DriverError::FileNotRegular(path) => format!("couldn't read {}: not a regular file\n", path.display()),
+            DriverError::FileHasNoName(path) => format!("couldn't extract file name from {}\n", path.display()),
             DriverError::LinkerOutputToStdout => "cannot output executable to stdout\n".to_string(),
             DriverError::ObjectToStdout => "cannot output object file to stdout\n".to_string(),
             DriverError::Unexpected => "unexpected error\n".to_string(),

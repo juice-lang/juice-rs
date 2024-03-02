@@ -1,4 +1,6 @@
 use std::{
+    borrow::Cow,
+    ffi::OsStr,
     fs::File,
     io::{self, Write},
     path::{self, PathBuf},
@@ -35,10 +37,17 @@ impl OutputFilePath {
         }
     }
 
-    pub fn to_str(&self) -> Option<&str> {
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
         match self {
-            Self::Stdout => Some("-"),
-            Self::File(path) => path.to_str(),
+            Self::Stdout => Cow::Borrowed("-"),
+            Self::File(path) => path.to_string_lossy(),
+        }
+    }
+
+    pub fn as_os_str(&self) -> &OsStr {
+        match self {
+            Self::Stdout => OsStr::new("-"),
+            Self::File(path) => path.as_os_str(),
         }
     }
 }

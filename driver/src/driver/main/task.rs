@@ -1,6 +1,8 @@
 use std::{
     borrow::Cow,
-    env, fs,
+    env,
+    ffi::{OsStr, OsString},
+    fs,
     future::Future,
     io::ErrorKind as IoErrorKind,
     os::unix::process::ExitStatusExt,
@@ -25,8 +27,8 @@ mod private {
 
     pub trait Task: Send + Sync {
         fn get_executable_path(&self) -> &PathBuf;
-        fn get_arguments(&self) -> &Vec<String>;
-        fn get_inputs(&self) -> &Vec<Box<dyn ErasedTask>>;
+        fn get_arguments(&self) -> &[OsString];
+        fn get_inputs(&self) -> &[Box<dyn ErasedTask>];
         fn get_output_path(&self) -> Cow<OutputFilePath>;
         fn get_output_is_temporary(&self) -> bool;
 
@@ -139,7 +141,7 @@ impl<T: ?Sized + Task> ErasedTask for T {
 }
 
 static EMPTY_PATH: LazyLock<PathBuf> = LazyLock::new(PathBuf::new);
-static EMPTY_ARGUMENTS: LazyLock<Vec<String>> = LazyLock::new(Vec::new);
+static EMPTY_ARGUMENTS: LazyLock<Vec<OsString>> = LazyLock::new(Vec::new);
 static EMPTY_INPUTS: LazyLock<Vec<Box<dyn ErasedTask>>> = LazyLock::new(Vec::new);
 
 pub struct InputTask(PathBuf);
@@ -155,11 +157,11 @@ impl private::Task for InputTask {
         &EMPTY_PATH
     }
 
-    fn get_arguments(&self) -> &Vec<String> {
+    fn get_arguments(&self) -> &[OsString] {
         &EMPTY_ARGUMENTS
     }
 
-    fn get_inputs(&self) -> &Vec<Box<dyn ErasedTask>> {
+    fn get_inputs(&self) -> &[Box<dyn ErasedTask>] {
         &EMPTY_INPUTS
     }
 
@@ -191,7 +193,7 @@ impl Task for InputTask {
 
 pub struct CompilationTask {
     executable_path: PathBuf,
-    arguments: Vec<String>,
+    arguments: Vec<OsString>,
     inputs: Vec<Box<dyn ErasedTask>>,
     output_path: OutputFilePath,
     output_is_temporary: bool,
@@ -214,15 +216,15 @@ impl CompilationTask {
         };
 
         let arguments = vec![
-            "frontend",
-            action_string,
-            "--input-file",
-            input.get_output_path().to_str().ok_or(DriverError::Unexpected)?,
-            "--output-file",
-            output_path.to_str().ok_or(DriverError::Unexpected)?,
+            OsStr::new("frontend"),
+            OsStr::new(action_string),
+            OsStr::new("--input-file"),
+            input.get_output_path().as_os_str(),
+            OsStr::new("--output-file"),
+            output_path.as_os_str(),
         ]
         .into_iter()
-        .map(String::from)
+        .map(OsString::from)
         .collect();
 
         let input = Box::new(input) as Box<dyn ErasedTask>;
@@ -237,18 +239,15 @@ impl CompilationTask {
     }
 
     pub fn new_with_temporary_output(action: Action, input: impl 'static + Task) -> DriverResult<Self> {
-        let input_base_name = if let OutputFilePath::File(path) = input.get_output_path().as_ref() {
-            path.file_stem()
-                .ok_or(DriverError::Unexpected)?
-                .to_str()
-                .ok_or(DriverError::Unexpected)?
-                .to_string()
+        let input_path = input.get_output_path();
+        let input_base_name = if let OutputFilePath::File(path) = input_path.as_ref() {
+            path.file_stem().ok_or(DriverError::FileHasNoName(path.clone()))?
         } else {
             return Err(DriverError::Unexpected);
         };
 
         let temp_file = TempFileBuilder::new()
-            .prefix(&input_base_name)
+            .prefix(input_base_name)
             .suffix(".o")
             .rand_bytes(5)
             .tempfile()?;
@@ -262,11 +261,11 @@ impl private::Task for CompilationTask {
         &self.executable_path
     }
 
-    fn get_arguments(&self) -> &Vec<String> {
+    fn get_arguments(&self) -> &[OsString] {
         &self.arguments
     }
 
-    fn get_inputs(&self) -> &Vec<Box<dyn ErasedTask>> {
+    fn get_inputs(&self) -> &[Box<dyn ErasedTask>] {
         &self.inputs
     }
 
@@ -287,7 +286,7 @@ impl Task for CompilationTask {}
 
 pub struct LinkingTask {
     executable_path: PathBuf,
-    arguments: Vec<String>,
+    arguments: Vec<OsString>,
     inputs: Vec<Box<dyn ErasedTask>>,
     output_path: OutputFilePath,
 }
@@ -304,26 +303,20 @@ impl LinkingTask {
 
         #[cfg(target_os = "macos")]
         let mut arguments = vec![
-            "-syslibroot",
-            super::macos::get_sdk_path()?.to_str().ok_or(DriverError::Unexpected)?,
-            "-lSystem",
+            OsStr::new("-syslibroot"),
+            super::macos::get_sdk_path()?.as_os_str(),
+            OsStr::new("-lSystem"),
         ];
         #[cfg(not(target_os = "macos"))]
         let mut arguments = compile_error!("This platform is not supported yet");
 
-        arguments.push("-o");
-        arguments.push(output_path.to_str().ok_or(DriverError::Unexpected)?);
+        arguments.push(OsStr::new("-o"));
+        arguments.push(output_path.as_os_str());
 
-        let mut arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
+        let mut arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
 
         for input in &inputs {
-            arguments.push(
-                input
-                    .get_output_path()
-                    .to_str()
-                    .ok_or(DriverError::Unexpected)?
-                    .to_string(),
-            );
+            arguments.push(input.get_output_path().as_os_str().to_owned());
         }
 
         Ok(Self {
@@ -340,11 +333,11 @@ impl private::Task for LinkingTask {
         &self.executable_path
     }
 
-    fn get_arguments(&self) -> &Vec<String> {
+    fn get_arguments(&self) -> &[OsString] {
         &self.arguments
     }
 
-    fn get_inputs(&self) -> &Vec<Box<dyn ErasedTask>> {
+    fn get_inputs(&self) -> &[Box<dyn ErasedTask>] {
         &self.inputs
     }
 

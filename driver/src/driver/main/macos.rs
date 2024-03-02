@@ -1,4 +1,6 @@
 use std::{
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -21,9 +23,7 @@ pub fn get_sdk_path() -> DriverResult<&'static Path> {
                 .args(["--sdk", "macosx", "--show-sdk-path"])
                 .output()?;
 
-            Ok(PathBuf::from(
-                String::from_utf8(output.stdout).map_err(|_| DriverError::Unexpected)?,
-            ))
+            Ok(PathBuf::from(OsStr::from_bytes(&output.stdout)))
         })
         .map(AsRef::as_ref)
 }
