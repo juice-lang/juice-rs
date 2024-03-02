@@ -16,9 +16,11 @@ use crate::cli::{Cli, Command};
 #[derive(Debug, From)]
 pub enum Error {
     #[from]
-    IO(io::Error),
-    #[from]
-    ExecutableNotFound(which::Error),
+    Io(io::Error),
+    ExecutableNotFound {
+        executable_name: String,
+        error: which::Error,
+    },
     ExecutionFailed {
         executable_path: PathBuf,
         exit_code: i32,
@@ -32,24 +34,26 @@ pub enum Error {
     LinkerOutputToStdout,
     ObjectToStdout,
     Unexpected,
-    AlreadyHandled,
+    AlreadyHandled(i32),
 }
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 trait Driver {
-    async fn run(&self) -> Result<(), Error>;
+    async fn run(self) -> Result<()>;
 }
 
 pub trait ErasedDriver {
-    fn run(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), Error>>>>;
+    fn run(self: Box<Self>) -> Pin<Box<dyn Future<Output = Result<()>>>>;
 }
 
-impl<T: Driver> ErasedDriver for T {
-    fn run(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), Error>>>> {
-        Box::pin(self.run())
+impl<T: 'static + Driver> ErasedDriver for T {
+    fn run(self: Box<Self>) -> Pin<Box<dyn Future<Output = Result<()>>>> {
+        Box::pin(Box::into_inner(self).run())
     }
 }
 
-pub fn get_driver(args: Cli) -> Result<Box<dyn ErasedDriver>, Error> {
+pub fn get_driver(args: Cli) -> Result<Box<dyn ErasedDriver>> {
     Ok(match args.command()? {
         Command::Frontend(frontend_args) => Box::new(FrontendDriver::new(frontend_args)),
         Command::Main(main_args) => Box::new(MainDriver::new(main_args)),

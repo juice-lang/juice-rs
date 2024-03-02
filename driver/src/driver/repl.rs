@@ -1,4 +1,4 @@
-use super::{Driver as DriverTrait, Error};
+use super::{Driver as DriverTrait, Result as DriverResult};
 
 pub struct Driver;
 
@@ -9,7 +9,7 @@ impl Driver {
 }
 
 impl DriverTrait for Driver {
-    async fn run(&self) -> Result<(), Error> {
+    async fn run(self) -> DriverResult<()> {
         todo!()
     }
 }

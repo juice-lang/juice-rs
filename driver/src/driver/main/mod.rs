@@ -7,10 +7,9 @@ use std::{
     path::{self, Path, PathBuf},
 };
 
-use common::OutputFilePath;
-
 use self::task::{CompilationTask, ErasedTask, InputTask, LinkingTask};
-use super::{Driver as DriverTrait, Error};
+use super::{Driver as DriverTrait, Error as DriverError, Result as DriverResult};
+use crate::cli::OutputFilePath;
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum Action {
@@ -66,15 +65,15 @@ impl Driver {
 }
 
 impl DriverTrait for Driver {
-    async fn run(&self) -> Result<(), Error> {
+    async fn run(self) -> DriverResult<()> {
         let input_task = InputTask::new(self.args.input_filepath.clone());
 
         let action = self.args.action;
 
         let task: Box<dyn ErasedTask> = if matches!(self.args.output_filepath, OutputFilePath::Stdout) {
             match action {
-                Action::EmitObject => return Err(Error::ObjectToStdout),
-                Action::EmitExecutable => return Err(Error::LinkerOutputToStdout),
+                Action::EmitObject => return Err(DriverError::ObjectToStdout),
+                Action::EmitExecutable => return Err(DriverError::LinkerOutputToStdout),
                 _ => Box::new(CompilationTask::new(action, input_task, OutputFilePath::Stdout, false)?),
             }
         } else if action == Action::EmitExecutable {

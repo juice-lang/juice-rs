@@ -1,6 +1,6 @@
-use ::frontend::FrontendArgs;
+use ::frontend::{Runner as FrontendRunner, RunnerArgs as FrontendArgs};
 
-use super::{Driver as DriverTrait, Error};
+use super::{Driver as DriverTrait, Error as DriverError, Result as DriverResult};
 
 pub struct Driver {
     args: FrontendArgs,
@@ -13,8 +13,8 @@ impl Driver {
 }
 
 impl DriverTrait for Driver {
-    async fn run(&self) -> Result<(), Error> {
-        println!("{:#?}", self.args);
-        todo!()
+    async fn run(self) -> DriverResult<()> {
+        let runner = FrontendRunner::new(self.args);
+        runner.run().or(Err(DriverError::AlreadyHandled(1)))
     }
 }

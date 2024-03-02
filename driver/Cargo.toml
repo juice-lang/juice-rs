@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 async-process = "2.1.0"
 clap = { version = "4.5.1", features = ["derive"] }
-common = { package = "juice-common", path = "../common" }
 derive_more = "0.99.17"
 frontend = { package = "juice-frontend", path = "../frontend" }
 tempfile = "3.10.1"

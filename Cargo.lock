@@ -441,16 +441,11 @@ dependencies = [
  "async-process",
  "clap",
  "derive_more",
- "juice-common",
  "juice-frontend",
  "tempfile",
  "tokio",
  "which",
 ]
-
-[[package]]
-name = "juice-common"
-version = "0.1.0"
 
 [[package]]
 name = "juice-frontend"

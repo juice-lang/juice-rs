@@ -1,12 +1,13 @@
 use std::{
-    io::Error,
+    fs::File,
+    io::{self, Write},
     path::{self, PathBuf},
 };
 
-use clap::{error::ErrorKind, Args, CommandFactory, Parser};
-use frontend::{FrontendAction, FrontendArgs};
+use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand};
+use frontend::{RunnerAction as FrontendAction, RunnerArgs as FrontendArgs};
 
-use crate::driver::{MainAction, MainArgs};
+use crate::driver::{Error as DriverError, MainAction, MainArgs, Result as DriverResult};
 
 #[derive(Debug, Parser)]
 #[command(name = "juice")]
@@ -20,10 +21,29 @@ pub struct Cli {
     main_args: Option<private::MainArgs>,
 }
 
-mod private {
-    use clap::Subcommand;
-    use common::OutputFilePath;
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum OutputFilePath {
+    Stdout,
+    File(PathBuf),
+}
 
+impl OutputFilePath {
+    pub fn try_into_stream(self) -> DriverResult<Box<dyn Write>> {
+        match self {
+            Self::Stdout => Ok(Box::new(io::stdout())),
+            Self::File(path) => Ok(Box::new(File::create(path)?)),
+        }
+    }
+
+    pub fn to_str(&self) -> Option<&str> {
+        match self {
+            Self::Stdout => Some("-"),
+            Self::File(path) => path.to_str(),
+        }
+    }
+}
+
+mod private {
     use super::*;
 
     #[derive(Debug, Args)]
@@ -55,7 +75,7 @@ mod private {
         if path.is_absolute() {
             Ok(path)
         } else {
-            Err("Path must be absolute".into())
+            Err("path must be absolute".into())
         }
     }
 
@@ -115,9 +135,9 @@ mod private {
 }
 
 impl TryFrom<private::FrontendArgs> for FrontendArgs {
-    type Error = Error;
+    type Error = DriverError;
 
-    fn try_from(args: private::FrontendArgs) -> Result<Self, Self::Error> {
+    fn try_from(args: private::FrontendArgs) -> DriverResult<Self> {
         let input_filepath = args.input_filepath;
         let output_stream = args.output_filepath.try_into_stream()?;
 
@@ -140,9 +160,9 @@ impl TryFrom<private::FrontendArgs> for FrontendArgs {
 }
 
 impl TryFrom<private::MainArgs> for MainArgs {
-    type Error = Error;
+    type Error = DriverError;
 
-    fn try_from(args: private::MainArgs) -> Result<Self, Self::Error> {
+    fn try_from(args: private::MainArgs) -> DriverResult<Self> {
         let input_filepath = path::absolute(&args.input_filename)?;
 
         let action = if args.dump_parse {
@@ -177,9 +197,9 @@ pub enum Command {
 }
 
 impl TryFrom<private::Command> for Command {
-    type Error = Error;
+    type Error = DriverError;
 
-    fn try_from(command: private::Command) -> Result<Self, Self::Error> {
+    fn try_from(command: private::Command) -> DriverResult<Self> {
         match command {
             private::Command::Frontend(args) => args.try_into().map(Self::Frontend),
             private::Command::Repl => Ok(Self::Repl),
@@ -188,7 +208,7 @@ impl TryFrom<private::Command> for Command {
 }
 
 impl Cli {
-    pub fn command(self) -> Result<Command, Error> {
+    pub fn command(self) -> DriverResult<Command> {
         if let Some(command) = self.command {
             command.try_into()
         } else {
@@ -196,7 +216,7 @@ impl Cli {
                 <Self as CommandFactory>::command()
                     .error(
                         ErrorKind::MissingRequiredArgument,
-                        "Either a subcommand or main arguments are required",
+                        "either a subcommand or main arguments are required",
                     )
                     .exit();
             };

@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     env, fs,
     future::Future,
-    io::ErrorKind as IOErrorKind,
+    io::ErrorKind as IoErrorKind,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     pin::Pin,
@@ -11,12 +11,14 @@ use std::{
 };
 
 use async_process::Command;
-use common::OutputFilePath;
 use tempfile::Builder as TempFileBuilder;
 use which::which;
 
 use super::Action;
-use crate::driver::Error;
+use crate::{
+    cli::OutputFilePath,
+    driver::{Error as DriverError, Result as DriverResult},
+};
 
 mod private {
     use super::*;
@@ -28,14 +30,14 @@ mod private {
         fn get_output_path(&self) -> Cow<OutputFilePath>;
         fn get_output_is_temporary(&self) -> bool;
 
-        fn create_execution_error(&self, exit_code: i32) -> Error {
-            Error::ExecutionFailed {
+        fn create_execution_error(&self, exit_code: i32) -> DriverError {
+            DriverError::ExecutionFailed {
                 executable_path: self.get_executable_path().clone(),
                 exit_code,
             }
         }
 
-        async fn execute_inputs(&self, time_point: SystemTime) -> Result<bool, Error> {
+        async fn execute_inputs(&self, time_point: SystemTime) -> DriverResult<bool> {
             let mut executed = false;
 
             for input in self.get_inputs() {
@@ -50,7 +52,7 @@ mod private {
 }
 
 pub trait Task: private::Task {
-    async fn execute_if_necessary(&self, time_point: SystemTime) -> Result<bool, Error> {
+    async fn execute_if_necessary(&self, time_point: SystemTime) -> DriverResult<bool> {
         match self.get_output_path().as_ref() {
             OutputFilePath::Stdout => {
                 self.execute_inputs(time_point).await?;
@@ -73,8 +75,8 @@ pub trait Task: private::Task {
                         }
                     }
                 }
-                Ok(_) => return Err(Error::FileNotRegular(path.to_owned())),
-                Err(error) if error.kind() == IOErrorKind::NotFound => {
+                Ok(_) => return Err(DriverError::FileNotRegular(path.to_owned())),
+                Err(error) if error.kind() == IoErrorKind::NotFound => {
                     self.execute_inputs(time_point).await?;
                 }
                 Err(error) => return Err(error.into()),
@@ -90,22 +92,22 @@ pub trait Task: private::Task {
             Some(0) => Ok(true),
             Some(exit_code) => Err(self.create_execution_error(exit_code)),
             None => Err(if let Some(signal) = status.signal() {
-                Error::ProcessTerminatedBySignal {
+                DriverError::ProcessTerminatedBySignal {
                     executable_path: self.get_executable_path().clone(),
                     signal,
                 }
             } else if let Some(signal) = status.stopped_signal() {
-                Error::ProcessTerminatedBySignal {
+                DriverError::ProcessTerminatedBySignal {
                     executable_path: self.get_executable_path().clone(),
                     signal,
                 }
             } else {
-                Error::Unexpected
+                DriverError::Unexpected
             }),
         }
     }
 
-    async fn execute(&self) -> Result<(), Error> {
+    async fn execute(&self) -> DriverResult<()> {
         let time_point = SystemTime::now();
 
         self.execute_if_necessary(time_point).await?;
@@ -117,9 +119,9 @@ pub trait Task: private::Task {
 pub trait ErasedTask: Send + Sync {
     fn get_output_path(&self) -> Cow<OutputFilePath>;
 
-    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = Result<bool, Error>>>>;
+    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>>;
 
-    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), Error>>>>;
+    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>>;
 }
 
 impl<T: ?Sized + Task> ErasedTask for T {
@@ -127,11 +129,11 @@ impl<T: ?Sized + Task> ErasedTask for T {
         self.get_output_path()
     }
 
-    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = Result<bool, Error>>>> {
+    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>> {
         Box::pin(self.execute_if_necessary(time_point))
     }
 
-    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = Result<(), Error>>>> {
+    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>> {
         Box::pin(self.execute())
     }
 }
@@ -171,7 +173,7 @@ impl private::Task for InputTask {
 }
 
 impl Task for InputTask {
-    async fn execute_if_necessary(&self, time_point: SystemTime) -> Result<bool, Error> {
+    async fn execute_if_necessary(&self, time_point: SystemTime) -> DriverResult<bool> {
         match fs::metadata(&self.0) {
             Ok(metadata) if metadata.is_file() => {
                 if metadata.modified().unwrap() > time_point {
@@ -180,8 +182,8 @@ impl Task for InputTask {
                     Ok(false)
                 }
             }
-            Ok(_) => Err(Error::FileNotRegular(self.0.to_owned())),
-            Err(error) if error.kind() == IOErrorKind::NotFound => Err(Error::FileNotFound(self.0.to_owned())),
+            Ok(_) => Err(DriverError::FileNotRegular(self.0.to_owned())),
+            Err(error) if error.kind() == IoErrorKind::NotFound => Err(DriverError::FileNotFound(self.0.to_owned())),
             Err(error) => Err(error.into()),
         }
     }
@@ -201,7 +203,7 @@ impl CompilationTask {
         input: impl 'static + Task,
         output_path: OutputFilePath,
         output_is_temporary: bool,
-    ) -> Result<Self, Error> {
+    ) -> DriverResult<Self> {
         let executable_path = env::current_exe()?;
 
         let action_string = match action {
@@ -215,9 +217,9 @@ impl CompilationTask {
             "frontend",
             action_string,
             "--input-file",
-            input.get_output_path().to_str().ok_or(Error::Unexpected)?,
+            input.get_output_path().to_str().ok_or(DriverError::Unexpected)?,
             "--output-file",
-            output_path.to_str().ok_or(Error::Unexpected)?,
+            output_path.to_str().ok_or(DriverError::Unexpected)?,
         ]
         .into_iter()
         .map(String::from)
@@ -234,15 +236,15 @@ impl CompilationTask {
         })
     }
 
-    pub fn new_with_temporary_output(action: Action, input: impl 'static + Task) -> Result<Self, Error> {
+    pub fn new_with_temporary_output(action: Action, input: impl 'static + Task) -> DriverResult<Self> {
         let input_base_name = if let OutputFilePath::File(path) = input.get_output_path().as_ref() {
             path.file_stem()
-                .ok_or(Error::Unexpected)?
+                .ok_or(DriverError::Unexpected)?
                 .to_str()
-                .ok_or(Error::Unexpected)?
+                .ok_or(DriverError::Unexpected)?
                 .to_string()
         } else {
-            return Err(Error::Unexpected);
+            return Err(DriverError::Unexpected);
         };
 
         let temp_file = TempFileBuilder::new()
@@ -276,8 +278,8 @@ impl private::Task for CompilationTask {
         self.output_is_temporary
     }
 
-    fn create_execution_error(&self, _exit_code: i32) -> Error {
-        Error::AlreadyHandled
+    fn create_execution_error(&self, exit_code: i32) -> DriverError {
+        DriverError::AlreadyHandled(exit_code)
     }
 }
 
@@ -291,28 +293,37 @@ pub struct LinkingTask {
 }
 
 impl LinkingTask {
-    pub fn new(inputs: Vec<Box<dyn ErasedTask>>, output_path: OutputFilePath) -> Result<Self, Error> {
+    pub fn new(inputs: Vec<Box<dyn ErasedTask>>, output_path: OutputFilePath) -> DriverResult<Self> {
         #[cfg(target_os = "macos")]
-        let executable_path = which("ld")?;
+        let executable_path = which("ld").map_err(|err| DriverError::ExecutableNotFound {
+            executable_name: String::from("ld"),
+            error: err,
+        })?;
         #[cfg(not(target_os = "macos"))]
         let executable_path = compile_error!("This platform is not supported yet");
 
         #[cfg(target_os = "macos")]
         let mut arguments = vec![
             "-syslibroot",
-            super::macos::get_sdk_path()?.to_str().ok_or(Error::Unexpected)?,
+            super::macos::get_sdk_path()?.to_str().ok_or(DriverError::Unexpected)?,
             "-lSystem",
         ];
         #[cfg(not(target_os = "macos"))]
         let mut arguments = compile_error!("This platform is not supported yet");
 
         arguments.push("-o");
-        arguments.push(output_path.to_str().ok_or(Error::Unexpected)?);
+        arguments.push(output_path.to_str().ok_or(DriverError::Unexpected)?);
 
         let mut arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
 
         for input in &inputs {
-            arguments.push(input.get_output_path().to_str().ok_or(Error::Unexpected)?.to_string());
+            arguments.push(
+                input
+                    .get_output_path()
+                    .to_str()
+                    .ok_or(DriverError::Unexpected)?
+                    .to_string(),
+            );
         }
 
         Ok(Self {
