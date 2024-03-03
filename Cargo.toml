@@ -1,6 +1,7 @@
 [workspace]
-members = ["driver", "frontend"]
+members = ["core", "driver", "frontend", "macros"]
 resolver = "2"
 
 [workspace.dependencies]
+ariadne = "0.4.0"
 derive_more = "0.99.17"

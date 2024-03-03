@@ -1,13 +1,19 @@
 [package]
-name = "juice-frontend"
+name = "juice-macros"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+proc-macro = true
+
 [dependencies]
+quote = "*"
+syn = { version = "*", features = ["extra-traits"] }
+proc-macro2 = "*"
+convert_case = "0.6.0"
+
+[dev-dependencies]
 ariadne = { workspace = true }
-derive_more = { workspace = true }
 juice-core = { path = "../core" }
-juice-macros = { path = "../macros" }
-lasso = "0.7.2"

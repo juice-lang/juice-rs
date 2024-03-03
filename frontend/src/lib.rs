@@ -1,3 +1,4 @@
+mod diag;
 mod error;
 mod runner;
 mod source_loc;
