@@ -288,17 +288,26 @@ impl Diagnostic {
             })
             .collect::<Vec<_>>();
 
-        let error_code_match_arms = match_patterns.iter().map(|(i, _, pattern)| {
-            let i = *i as u32;
-
-            quote! {
-                #pattern => #i
-            }
-        });
-
         let diagnostic_kind = quote! {
             ::juice_core::diag::DiagnosticKind
         };
+
+        let diagnostic_code = quote! {
+            ::juice_core::diag::DiagnosticCode
+        };
+
+        let error_code_match_arms = match_patterns.iter().map(|(i, variant, pattern)| {
+            let kind = match variant.kind {
+                DiagnosticKind::Error | DiagnosticKind::StaticError => quote! { #diagnostic_kind::Error },
+                DiagnosticKind::Warning | DiagnosticKind::StaticWarning => quote! { #diagnostic_kind::Warning },
+            };
+
+            let i = *i as u32;
+
+            quote! {
+                #pattern => #diagnostic_code::new(#kind, #i)
+            }
+        });
 
         let diagnostic_kind_match_arms = match_patterns.iter().map(|(_, variant, pattern)| {
             let kind = match variant.kind {
@@ -350,7 +359,7 @@ impl Diagnostic {
                     #constructor_functions
                 )*
 
-                pub fn error_code(&self) -> u32 {
+                pub fn get_code(&self) -> #diagnostic_code {
                     match #match_value {
                         #(
                             #error_code_match_arms,
@@ -358,7 +367,7 @@ impl Diagnostic {
                     }
                 }
 
-                pub fn kind(&self) -> #diagnostic_kind {
+                pub fn get_kind(&self) -> #diagnostic_kind {
                     match #match_value {
                         #(
                             #diagnostic_kind_match_arms,
@@ -442,12 +451,6 @@ impl DiagnosticNote {
                 }
             }
         });
-
-        let match_value = if self.variants.is_empty() {
-            quote! { *self }
-        } else {
-            quote! { self }
-        };
 
         let message_match_arms = self.variants.iter().map(|variant| {
             let pattern = variant.match_pattern(quote! { Self }, false);

@@ -71,6 +71,10 @@ impl SourceManager {
         }
     }
 
+    pub fn get_cache(&self) -> SourceCache {
+        SourceCache { source_manager: self }
+    }
+
     pub fn iter(&self) -> SourceIter {
         SourceIter {
             source_manager: self,
@@ -79,11 +83,15 @@ impl SourceManager {
     }
 }
 
-impl<'a> ariadne::Cache<Source<'a>> for SourceManager {
+pub struct SourceCache<'a> {
+    source_manager: &'a SourceManager,
+}
+
+impl<'a> ariadne::Cache<Source<'a>> for SourceCache<'a> {
     type Storage = Arc<str>;
 
     fn fetch(&mut self, id: &Source) -> Result<&ariadne::Source<Self::Storage>, Box<dyn Debug + '_>> {
-        Ok(&self.sources[&id.key].1)
+        Ok(&self.source_manager.sources[&id.key].1)
     }
 
     fn display(&self, id: &Source<'a>) -> Option<Box<dyn Display + 'a>> {
