@@ -2,14 +2,14 @@ use proc_macro::TokenStream;
 use quote::ToTokens as _;
 use syn::parse_macro_input;
 
-use crate::diagnostic_variants::{Diagnostic, DiagnosticNote};
+use crate::diagnostic_variants::{DiagnosticNote, Diagnostics};
 
 mod diagnostic_variants;
 
 #[proc_macro]
 pub fn diagnostic(input: TokenStream) -> TokenStream {
-    let diagnostic: Diagnostic = parse_macro_input!(input);
-    diagnostic.into_token_stream().into()
+    let diagnostics: Diagnostics = parse_macro_input!(input);
+    diagnostics.into_token_stream().into()
 }
 
 #[proc_macro]

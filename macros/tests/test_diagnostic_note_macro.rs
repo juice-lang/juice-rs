@@ -5,12 +5,14 @@ use juice_core::diag::Colored;
 use juice_macros::diagnostic_note;
 
 diagnostic_note!(
-    DiagnosticNote;
-    SimpleNote => "This is a simple note",
-    NoteWithArg(number: u32) => "This is a note with an argument: {}",
-    NoteWithManyArgs(a: u32, b: i32, c: f32, d: &'static str) => "This is a note with many arguments: {}, {}, {}, {}",
-    NoteWithIntoArg(string: into String) => "This is a note with an into argument: {}",
-    NoteWithColoredArg(colored: into Colored<u32>) => "This is a note with a colored argument: {}",
+    pub enum DiagnosticNote<'a> {
+        SimpleNote => "This is a simple note",
+        NoteWithArg(number: u32) => "This is a note with an argument: {}",
+        NoteWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) =>
+            "This is a note with many arguments: {}, {}, {}, {}",
+        NoteWithIntoArg(string: into String) => "This is a note with an into argument: {}",
+        NoteWithColoredArg(colored: into Colored<u32>) => "This is a note with a colored argument: {}",
+    }
 );
 
 #[allow(clippy::approx_constant)]

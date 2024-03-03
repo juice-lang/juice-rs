@@ -5,7 +5,7 @@ mod engine;
 mod static_report;
 
 pub use self::{
-    consumer::Consumer as DiagnosticConsumer,
+    consumer::{Consumer as DiagnosticConsumer, DefaultConsumer as DefaultDiagnosticConsumer},
     diagnostic::{Diagnostic, StaticDiagnostic},
     diagnostic_note::{DiagnosticContextNote, DiagnosticNote},
     engine::{Engine as DiagnosticEngine, Report as DiagnosticReport},

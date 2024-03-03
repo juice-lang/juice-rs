@@ -73,6 +73,16 @@ pub enum DiagnosticKind {
     Warning,
 }
 
+impl DiagnosticKind {
+    pub fn is_error(self) -> bool {
+        matches!(self, Self::Error)
+    }
+
+    pub fn is_warning(self) -> bool {
+        matches!(self, Self::Warning)
+    }
+}
+
 impl Display for DiagnosticKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {

@@ -2,6 +2,7 @@ use ariadne::{Color, Fmt as _};
 
 use super::{DiagnosticNote, StaticDiagnostic};
 
+#[must_use = "report does nothing unless diagnosed"]
 pub struct StaticReport {
     diagnostic: StaticDiagnostic,
     note: Option<DiagnosticNote>,
@@ -12,9 +13,11 @@ impl StaticReport {
         Self { diagnostic, note: None }
     }
 
-    pub fn with_note(mut self, note: DiagnosticNote) -> Self {
-        self.note = Some(note);
-        self
+    pub fn with_note(self, note: DiagnosticNote) -> Self {
+        StaticReport {
+            diagnostic: self.diagnostic,
+            note: Some(note),
+        }
     }
 
     pub fn diagnose(self) {

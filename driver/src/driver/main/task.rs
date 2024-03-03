@@ -5,7 +5,7 @@ use std::{
     fs,
     future::Future,
     io::ErrorKind as IoErrorKind,
-    os::unix::process::ExitStatusExt,
+    os::unix::process::ExitStatusExt as _,
     path::{Path, PathBuf},
     pin::Pin,
     sync::LazyLock,
@@ -84,6 +84,12 @@ pub trait Task: private::Task {
                 Err(error) => return Err(error.into()),
             },
         }
+
+        print!("{} ", self.get_executable_path().to_string_lossy());
+        for argument in self.get_arguments() {
+            print!("{} ", argument.to_string_lossy());
+        }
+        println!();
 
         let status = Command::new(self.get_executable_path())
             .args(self.get_arguments())
@@ -292,7 +298,7 @@ pub struct LinkingTask {
 }
 
 impl LinkingTask {
-    pub fn new(inputs: Vec<Box<dyn ErasedTask>>, output_path: OutputFilePath) -> DriverResult<Self> {
+    pub async fn new(inputs: Vec<Box<dyn ErasedTask>>, output_path: OutputFilePath) -> DriverResult<Self> {
         #[cfg(target_os = "macos")]
         let executable_path = which("ld").map_err(|err| DriverError::ExecutableNotFound {
             executable_name: String::from("ld"),
@@ -304,7 +310,7 @@ impl LinkingTask {
         #[cfg(target_os = "macos")]
         let mut arguments = vec![
             OsStr::new("-syslibroot"),
-            super::macos::get_sdk_path()?.as_os_str(),
+            super::macos::get_sdk_path().await?.as_os_str(),
             OsStr::new("-lSystem"),
         ];
         #[cfg(not(target_os = "macos"))]

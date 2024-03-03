@@ -15,6 +15,11 @@ impl Driver {
 impl DriverTrait for Driver {
     async fn run(self) -> DriverResult<()> {
         let runner = FrontendRunner::new(self.args);
-        runner.run().or(Err(DriverError::AlreadyHandled(1)))
+
+        if runner.run() {
+            Ok(())
+        } else {
+            Err(DriverError::AlreadyHandled(1))
+        }
     }
 }

@@ -2,13 +2,13 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use convert_case::{Case, Casing as _};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{quote, ToTokens};
 use syn::{
-    bracketed, custom_keyword, parenthesized,
+    braced, bracketed, custom_keyword, parenthesized,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::Paren,
-    Ident, LitStr, Result, Token, Type,
+    Ident, Lifetime, LitStr, Result, Token, Type, Visibility,
 };
 
 macro_rules! error {
@@ -48,34 +48,103 @@ mod keyword {
     custom_keyword!(warning);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
     Error,
     Warning,
-    StaticError,
-    StaticWarning,
 }
 
 impl Parse for DiagnosticKind {
     fn parse(input: ParseStream) -> Result<Self> {
-        let is_static = if input.peek(Token![static]) {
-            input.parse::<Token![static]>()?;
-
-            true
-        } else {
-            false
-        };
-
         if input.peek(keyword::error) {
             input.parse::<keyword::error>()?;
 
-            Ok(if is_static { Self::StaticError } else { Self::Error })
+            Ok(Self::Error)
         } else if input.peek(keyword::warning) {
             input.parse::<keyword::warning>()?;
 
-            Ok(if is_static { Self::StaticWarning } else { Self::Warning })
+            Ok(Self::Warning)
         } else {
             Err(input.error(Error::ExpectedDiagnosticKind))
         }
+    }
+}
+
+impl ToTokens for DiagnosticKind {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let diagnostic_kind = quote! {
+            ::juice_core::diag::DiagnosticKind
+        };
+
+        let kind = match self {
+            Self::Error => quote! { #diagnostic_kind::Error },
+            Self::Warning => quote! { #diagnostic_kind::Warning },
+        };
+
+        tokens.extend(kind);
+    }
+}
+
+pub struct EnumDefinition {
+    pub visiblity: Option<Visibility>,
+    pub enum_token: Token![enum],
+    pub name: Ident,
+    pub lifetime: Option<(Token![<], Lifetime, Token![>])>,
+}
+
+impl EnumDefinition {
+    pub fn generic_parameters(&self) -> TokenStream {
+        if let Some((open, lifetime, close)) = self.lifetime.as_ref() {
+            quote! { #open #lifetime #close }
+        } else {
+            TokenStream::new()
+        }
+    }
+}
+
+impl Parse for EnumDefinition {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let visiblity = if input.peek(Token![pub]) {
+            Some(input.parse()?)
+        } else {
+            None
+        };
+
+        let enum_token = input.parse::<Token![enum]>()?;
+
+        let name = input.parse::<Ident>()?;
+
+        let lifetime = if input.peek(Token![<]) {
+            let open = input.parse::<Token![<]>()?;
+
+            let lifetime = input.parse::<Lifetime>()?;
+
+            let close = input.parse::<Token![>]>()?;
+
+            Some((open, lifetime, close))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            visiblity,
+            name,
+            lifetime,
+            enum_token,
+        })
+    }
+}
+
+impl ToTokens for EnumDefinition {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let visiblity = self.visiblity.as_ref();
+        let enum_token = &self.enum_token;
+        let name = &self.name;
+        let generic_parameters = self.generic_parameters();
+
+        tokens.extend(quote! {
+            #visiblity #enum_token #name #generic_parameters
+        });
     }
 }
 
@@ -229,24 +298,22 @@ impl Parse for DiagnosticVariant {
 }
 
 pub struct Diagnostic {
+    pub definition: EnumDefinition,
     pub variants: Vec<DiagnosticVariant>,
 }
 
 impl Diagnostic {
-    fn diagnostic(variants: Vec<(usize, &DiagnosticVariant)>) -> TokenStream {
-        Diagnostic::enum_definition(format_ident!("Diagnostic"), &variants)
-    }
+    pub fn enum_definition(&self, start_index: usize) -> TokenStream {
+        let name = &self.definition.name;
+        let definition = &self.definition;
 
-    fn static_diagnostic(variants: Vec<(usize, &DiagnosticVariant)>) -> TokenStream {
-        Diagnostic::enum_definition(format_ident!("StaticDiagnostic"), &variants)
-    }
+        let generic_parameters = self.definition.generic_parameters();
 
-    fn enum_definition(name: Ident, variants: &[(usize, &DiagnosticVariant)]) -> TokenStream {
-        let enum_variants = variants.iter().map(|(_, variant)| variant.inner.enum_variant());
+        let enum_variants = self.variants.iter().map(|variant| variant.inner.enum_variant());
 
-        let constructor_functions = variants.iter().map(|(_, variant)| {
+        let constructor_functions = self.variants.iter().map(|variant| {
             let name = &variant.inner.name;
-            let fn_name = format_ident!("{}", name.to_string().to_case(Case::Snake));
+            let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
             let arguments = variant.inner.fields.iter().map(|field| field.function_argument());
 
@@ -258,7 +325,17 @@ impl Diagnostic {
                 }
             });
 
-            let field_names = variant.inner.fields.iter().map(|field| &field.name);
+            let fields = if variant.inner.fields.is_empty() {
+                None
+            } else {
+                let field_names = variant.inner.fields.iter().map(|field| &field.name);
+
+                Some(quote! {
+                    {
+                        #(#field_names),*
+                    }
+                })
+            };
 
             quote! {
                 pub fn #fn_name(#(#arguments),*) -> Self {
@@ -266,61 +343,50 @@ impl Diagnostic {
                         #into_assignments
                     )*
 
-                    Self::#name {
-                        #(#field_names),*
-                    }
+                    Self::#name #fields
                 }
             }
         });
 
-        let match_value = if variants.is_empty() {
+        let match_value = if self.variants.is_empty() {
             quote! { *self }
         } else {
             quote! { self }
         };
 
-        let match_patterns = variants
+        let match_patterns = self
+            .variants
             .iter()
-            .map(|(i, variant)| {
+            .map(|variant| {
                 let pattern = variant.inner.match_pattern(quote! { Self }, true);
 
-                (*i, *variant, pattern)
+                (variant, pattern)
             })
             .collect::<Vec<_>>();
-
-        let diagnostic_kind = quote! {
-            ::juice_core::diag::DiagnosticKind
-        };
 
         let diagnostic_code = quote! {
             ::juice_core::diag::DiagnosticCode
         };
 
-        let error_code_match_arms = match_patterns.iter().map(|(i, variant, pattern)| {
-            let kind = match variant.kind {
-                DiagnosticKind::Error | DiagnosticKind::StaticError => quote! { #diagnostic_kind::Error },
-                DiagnosticKind::Warning | DiagnosticKind::StaticWarning => quote! { #diagnostic_kind::Warning },
-            };
+        let error_code_match_arms = match_patterns.iter().enumerate().map(|(i, (variant, pattern))| {
+            let kind = variant.kind;
 
-            let i = *i as u32;
+            let i = (i + start_index) as u32;
 
             quote! {
                 #pattern => #diagnostic_code::new(#kind, #i)
             }
         });
 
-        let diagnostic_kind_match_arms = match_patterns.iter().map(|(_, variant, pattern)| {
-            let kind = match variant.kind {
-                DiagnosticKind::Error | DiagnosticKind::StaticError => quote! { #diagnostic_kind::Error },
-                DiagnosticKind::Warning | DiagnosticKind::StaticWarning => quote! { #diagnostic_kind::Warning },
-            };
+        let diagnostic_kind_match_arms = match_patterns.iter().map(|(variant, pattern)| {
+            let kind = variant.kind;
 
             quote! {
                 #pattern => #kind
             }
         });
 
-        let message_match_arms = variants.iter().map(|(_, variant)| {
+        let message_match_arms = self.variants.iter().map(|variant| {
             let pattern = variant.inner.match_pattern(quote! { Self }, false);
 
             let format = &variant.inner.format;
@@ -348,13 +414,13 @@ impl Diagnostic {
 
         quote! {
             #[derive(Debug, Clone)]
-            pub enum #name {
+            #definition {
                 #(
                     #enum_variants,
                 )*
             }
 
-            impl #name {
+            impl #generic_parameters #name #generic_parameters {
                 #(
                     #constructor_functions
                 )*
@@ -367,7 +433,7 @@ impl Diagnostic {
                     }
                 }
 
-                pub fn get_kind(&self) -> #diagnostic_kind {
+                pub fn get_kind(&self) -> ::juice_core::diag::DiagnosticKind {
                     match #match_value {
                         #(
                             #diagnostic_kind_match_arms,
@@ -391,41 +457,64 @@ impl Diagnostic {
 
 impl Parse for Diagnostic {
     fn parse(input: ParseStream) -> Result<Self> {
-        let variants = Punctuated::<DiagnosticVariant, Token![,]>::parse_terminated(input)?
+        let definition = input.parse::<EnumDefinition>()?;
+
+        let braced_input;
+        braced!(braced_input in input);
+
+        let variants = Punctuated::<DiagnosticVariant, Token![,]>::parse_terminated(&braced_input)?
             .into_iter()
             .collect();
 
-        Ok(Self { variants })
+        Ok(Self { definition, variants })
     }
 }
 
-impl ToTokens for Diagnostic {
+pub struct Diagnostics {
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl Parse for Diagnostics {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut diagnostics = Vec::new();
+
+        while input.peek(Token![enum]) || input.peek(Token![pub]) {
+            diagnostics.push(input.parse()?);
+        }
+
+        Ok(Self { diagnostics })
+    }
+}
+
+impl ToTokens for Diagnostics {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let (variants, static_variants) = self.variants.iter().enumerate().partition::<Vec<_>, _>(|(_, variant)| {
-            matches!(variant.kind, DiagnosticKind::Error | DiagnosticKind::Warning)
+        self.diagnostics.iter().fold(0, |index, diagnostic| {
+            let definition = diagnostic.enum_definition(index);
+
+            tokens.extend(definition);
+
+            index + diagnostic.variants.len()
         });
-
-        let diagnostic = Diagnostic::diagnostic(variants);
-        let static_diagnostic = Diagnostic::static_diagnostic(static_variants);
-
-        tokens.extend([diagnostic, static_diagnostic]);
     }
 }
 
 pub struct DiagnosticNote {
-    pub enum_name: Ident,
+    pub definition: EnumDefinition,
     pub variants: Vec<DiagnosticMessageVariant>,
 }
 
 impl DiagnosticNote {
     fn enum_definition(&self) -> TokenStream {
-        let name = &self.enum_name;
+        let name = &self.definition.name;
+        let definition = &self.definition;
+
+        let generic_parameters = self.definition.generic_parameters();
 
         let enum_variants = self.variants.iter().map(|variant| variant.enum_variant());
 
         let constructor_functions = self.variants.iter().map(|variant| {
             let name = &variant.name;
-            let fn_name = format_ident!("{}", name.to_string().to_case(Case::Snake));
+            let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
             let arguments = variant.fields.iter().map(|field| field.function_argument());
 
@@ -437,7 +526,17 @@ impl DiagnosticNote {
                 }
             });
 
-            let field_names = variant.fields.iter().map(|field| &field.name);
+            let fields = if variant.fields.is_empty() {
+                None
+            } else {
+                let field_names = variant.fields.iter().map(|field| &field.name);
+
+                Some(quote! {
+                    {
+                        #(#field_names),*
+                    }
+                })
+            };
 
             quote! {
                 pub fn #fn_name(#(#arguments),*) -> Self {
@@ -445,9 +544,7 @@ impl DiagnosticNote {
                         #into_assignments
                     )*
 
-                    Self::#name {
-                        #(#field_names),*
-                    }
+                    Self::#name #fields
                 }
             }
         });
@@ -480,13 +577,13 @@ impl DiagnosticNote {
 
         quote! {
             #[derive(Debug, Clone)]
-            pub enum #name {
+            #definition {
                 #(
                     #enum_variants,
                 )*
             }
 
-            impl #name {
+            impl #generic_parameters #name #generic_parameters {
                 #(
                     #constructor_functions
                 )*
@@ -507,15 +604,16 @@ impl DiagnosticNote {
 
 impl Parse for DiagnosticNote {
     fn parse(input: ParseStream) -> Result<Self> {
-        let enum_name = input.parse::<Ident>()?;
+        let definition = input.parse::<EnumDefinition>()?;
 
-        input.parse::<Token![;]>()?;
+        let braced_input;
+        braced!(braced_input in input);
 
-        let variants = Punctuated::<DiagnosticMessageVariant, Token![,]>::parse_terminated(input)?
+        let variants = Punctuated::<DiagnosticMessageVariant, Token![,]>::parse_terminated(&braced_input)?
             .into_iter()
             .collect();
 
-        Ok(Self { enum_name, variants })
+        Ok(Self { definition, variants })
     }
 }
 

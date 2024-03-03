@@ -1,7 +1,7 @@
 #![feature(absolute_path)]
 #![feature(box_into_inner)]
+#![feature(byte_slice_trim_ascii)]
 #![feature(lazy_cell)]
-#![feature(once_cell_try)]
 #![feature(try_blocks)]
 
 pub mod cli;

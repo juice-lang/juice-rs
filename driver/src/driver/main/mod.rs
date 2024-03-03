@@ -79,10 +79,7 @@ impl DriverTrait for Driver {
         } else if action == Action::EmitExecutable {
             let compilation_task = CompilationTask::new_with_temporary_output(action, input_task)?;
 
-            Box::new(LinkingTask::new(
-                vec![Box::new(compilation_task)],
-                self.args.output_filepath.clone(),
-            )?)
+            Box::new(LinkingTask::new(vec![Box::new(compilation_task)], self.args.output_filepath.clone()).await?)
         } else {
             Box::new(CompilationTask::new(
                 action,
