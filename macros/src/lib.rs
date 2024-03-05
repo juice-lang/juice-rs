@@ -1,14 +1,14 @@
 #![feature(array_windows)]
-#![feature(slice_group_by)]
 
 mod diagnostic_variants;
-mod keyword;
+mod enum_def;
+mod string_enum;
 
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use keyword::KeywordEnum;
 use proc_macro::TokenStream;
 use quote::ToTokens as _;
+use string_enum::StringEnum;
 use syn::parse_macro_input;
 
 use crate::diagnostic_variants::{DiagnosticNote, Diagnostics};
@@ -39,8 +39,7 @@ error! {
     ExpectedDiagnosticKind => "Expected either 'error' or 'warning'",
     FieldNamedColor => "Diagnostic fields cannot be named 'color'",
     NoFieldsWithFormat => "Format string contains a placeholder but no fields were provided",
-    NotAnEnum => "Can only derive Keyword for enums",
-    NotAUnitVariant => "Can only derive Keyword for unit variants",
+    EnumCannotHaveLifetime => "Enum cannot have a lifetime",
     DuplicateVariantString => "Duplicate variant string",
 }
 
@@ -56,8 +55,8 @@ pub fn diagnostic_note(input: TokenStream) -> TokenStream {
     diagnostic_note.into_token_stream().into()
 }
 
-#[proc_macro_derive(Keyword, attributes(kw))]
-pub fn keyword_derive(input: TokenStream) -> TokenStream {
-    let keyword_enum: KeywordEnum = parse_macro_input!(input);
-    keyword_enum.into_token_stream().into()
+#[proc_macro]
+pub fn string_enum(input: TokenStream) -> TokenStream {
+    let string_enum: StringEnum = parse_macro_input!(input);
+    string_enum.into_token_stream().into()
 }

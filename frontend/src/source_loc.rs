@@ -63,6 +63,10 @@ impl<'a> SourceRange<'a> {
     pub fn end_loc(&self) -> SourceLoc<'a> {
         SourceLoc::new(self.source, self.end)
     }
+
+    pub fn get_text(&self) -> &'a str {
+        &self.source.get_contents()[self.start..self.end]
+    }
 }
 
 impl<'a> ariadne::Span for SourceRange<'a> {

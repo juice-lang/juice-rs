@@ -4,44 +4,98 @@ use convert_case::{Case, Casing as _};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{
+    braced,
     parse::{Parse, ParseStream},
-    spanned::Spanned,
-    Data, DataStruct, DataUnion, DeriveInput, Fields, Ident, LitStr, Result,
+    punctuated::Punctuated,
+    Ident, LitStr, Result, Token,
 };
 
-use crate::Error;
+use crate::{enum_def::EnumDefinition, Error};
 
-pub struct KeywordEnum {
-    name: Ident,
+pub struct StringEnumVariant {
+    string: String,
+    variant_name: Ident,
+    span: Span,
+}
+
+impl Parse for StringEnumVariant {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let variant_name = input.parse::<Ident>()?;
+
+        let (string, span) = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+
+            let string = input.parse::<LitStr>()?;
+            (string.value(), string.span())
+        } else {
+            (
+                variant_name.to_string().trim_start_matches("r#").to_case(Case::Snake),
+                variant_name.span(),
+            )
+        };
+
+        Ok(Self {
+            string,
+            variant_name,
+            span,
+        })
+    }
+}
+
+pub struct StringEnum {
+    definition: EnumDefinition,
     variant_strings: Vec<(String, Ident, Span)>,
 }
 
-impl KeywordEnum {
-    fn impl_display(&self) -> TokenStream {
-        let name = &self.name;
+impl StringEnum {
+    fn enum_definition(&self) -> TokenStream {
+        let definition = &self.definition;
 
-        let match_arms = self.variant_strings.iter().map(|(string, variant_name, span)| {
-            let string = quote_spanned! { *span => #string };
-
-            quote! {
-                Self::#variant_name => #string
-            }
-        });
+        let variants = self.variant_strings.iter().map(|(_, variant_name, _)| variant_name);
 
         quote! {
-            #[automatically_derived]
-            impl ::core::fmt::Display for #name {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    write!(f, "{}", match self {
-                        #(#match_arms),*
-                    })
+            #definition {
+                #(#variants),*
+            }
+        }
+    }
+
+    fn impl_display(&self) -> TokenStream {
+        let name = &self.definition.name;
+
+        if self.variant_strings.is_empty() {
+            quote! {
+                #[automatically_derived]
+                impl ::core::fmt::Display for #name {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        match *self {}
+                    }
+                }
+            }
+        } else {
+            let match_arms = self.variant_strings.iter().map(|(string, variant_name, span)| {
+                let string = quote_spanned! { *span => #string };
+
+                quote! {
+                    Self::#variant_name => #string
+                }
+            });
+
+            quote! {
+                #[automatically_derived]
+                impl ::core::fmt::Display for #name {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        write!(f, "{}", match self {
+                            #(#match_arms),*
+                        })
+                    }
                 }
             }
         }
     }
 
     fn impl_from_str(&self) -> TokenStream {
-        let name = &self.name;
+        let name = &self.definition.name;
 
         let variant_strings = self
             .variant_strings
@@ -52,7 +106,7 @@ impl KeywordEnum {
         let mut variant_strings = variant_strings.into_iter();
         let variant_strings: &mut dyn ExactSizeIterator<Item = _> = &mut variant_strings;
 
-        let match_variants = KeywordEnum::match_variants(variant_strings.peekable(), 0);
+        let match_variants = StringEnum::match_variants(variant_strings.peekable(), 0);
 
         quote! {
             #[automatically_derived]
@@ -77,7 +131,7 @@ impl KeywordEnum {
         if let Some(first) = variant_strings.next_if(|(string, _)| string.is_empty()) {
             let variant_name = first.1;
 
-            let match_variants = KeywordEnum::match_variants(variant_strings, depth);
+            let match_variants = StringEnum::match_variants(variant_strings, depth);
 
             quote! {
                 if len == #depth {
@@ -111,7 +165,7 @@ impl KeywordEnum {
                 let mut variant_strings = chunk.iter().map(|(_, rest, variant_name)| (*rest, *variant_name));
                 let variant_strings: &mut dyn ExactSizeIterator<Item = _> = &mut variant_strings;
 
-                let match_variants = KeywordEnum::match_variants(variant_strings.peekable(), depth + 1);
+                let match_variants = StringEnum::match_variants(variant_strings.peekable(), depth + 1);
 
                 quote! {
                     #byte => #match_variants
@@ -134,63 +188,28 @@ impl KeywordEnum {
     }
 }
 
-impl Parse for KeywordEnum {
+impl Parse for StringEnum {
     fn parse(input: ParseStream) -> Result<Self> {
-        let input: DeriveInput = input.parse()?;
+        let definition = input.parse::<EnumDefinition>()?;
 
-        let data = match input.data {
-            Data::Enum(data) => data,
-            Data::Struct(DataStruct { struct_token, .. }) => {
-                return Err(syn::Error::new_spanned(struct_token, Error::NotAnEnum))
-            }
-            Data::Union(DataUnion { union_token, .. }) => {
-                return Err(syn::Error::new_spanned(union_token, Error::NotAnEnum))
-            }
-        };
+        if definition.lifetime.is_some() {
+            return Err(syn::Error::new_spanned(
+                definition.lifetime.unwrap().1,
+                Error::EnumCannotHaveLifetime,
+            ));
+        }
 
-        let mut errors = Vec::new();
+        let braced_input;
+        braced!(braced_input in input);
 
-        let mut variant_strings = data
-            .variants
+        let mut variant_strings = Punctuated::<StringEnumVariant, Token![,]>::parse_terminated(&braced_input)?
             .into_iter()
-            .filter_map(|variant| {
-                let variant_span = variant.span();
-                let variant_name = variant.ident;
-
-                let string = variant.attrs.iter().find_map(|attr| {
-                    if attr.path().is_ident("kw") {
-                        match attr.parse_args::<LitStr>() {
-                            Ok(string) => Some(string),
-                            Err(err) => {
-                                errors.push(err);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    }
-                });
-
-                let (string, span) = if let Some(string) = string {
-                    (string.value(), string.span())
-                } else {
-                    (
-                        variant_name.to_string().trim_start_matches("r#").to_case(Case::Snake),
-                        variant_name.span(),
-                    )
-                };
-
-                match variant.fields {
-                    Fields::Unit => Some((string, variant_name, span)),
-                    _ => {
-                        errors.push(syn::Error::new(variant_span, Error::NotAUnitVariant));
-                        None
-                    }
-                }
-            })
+            .map(|variant| (variant.string, variant.variant_name, variant.span))
             .collect::<Vec<_>>();
 
         variant_strings.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+
+        let mut errors = Vec::new();
 
         let mut last_was_duplicate = false;
         for [(a, _, span_a), (b, _, span_b)] in variant_strings.array_windows() {
@@ -212,16 +231,15 @@ impl Parse for KeywordEnum {
             Err(error)
         } else {
             Ok(Self {
-                name: input.ident,
+                definition,
                 variant_strings,
             })
         }
     }
 }
 
-impl ToTokens for KeywordEnum {
+impl ToTokens for StringEnum {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(self.impl_from_str());
-        tokens.extend(self.impl_display());
+        tokens.extend([self.enum_definition(), self.impl_from_str(), self.impl_display()]);
     }
 }

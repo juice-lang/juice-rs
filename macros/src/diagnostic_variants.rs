@@ -6,10 +6,10 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::Paren,
-    Ident, Lifetime, LitStr, Result, Token, Type, Visibility,
+    Ident, LitStr, Result, Token, Type,
 };
 
-use super::Error;
+use crate::{enum_def::EnumDefinition, Error};
 
 mod keyword {
     use super::*;
@@ -54,69 +54,6 @@ impl ToTokens for DiagnosticKind {
         };
 
         tokens.extend(kind);
-    }
-}
-
-pub struct EnumDefinition {
-    pub visiblity: Option<Visibility>,
-    pub enum_token: Token![enum],
-    pub name: Ident,
-    pub lifetime: Option<(Token![<], Lifetime, Token![>])>,
-}
-
-impl EnumDefinition {
-    pub fn generic_parameters(&self) -> TokenStream {
-        if let Some((open, lifetime, close)) = self.lifetime.as_ref() {
-            quote! { #open #lifetime #close }
-        } else {
-            TokenStream::new()
-        }
-    }
-}
-
-impl Parse for EnumDefinition {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let visiblity = if input.peek(Token![pub]) {
-            Some(input.parse()?)
-        } else {
-            None
-        };
-
-        let enum_token = input.parse::<Token![enum]>()?;
-
-        let name = input.parse::<Ident>()?;
-
-        let lifetime = if input.peek(Token![<]) {
-            let open = input.parse::<Token![<]>()?;
-
-            let lifetime = input.parse::<Lifetime>()?;
-
-            let close = input.parse::<Token![>]>()?;
-
-            Some((open, lifetime, close))
-        } else {
-            None
-        };
-
-        Ok(Self {
-            visiblity,
-            name,
-            lifetime,
-            enum_token,
-        })
-    }
-}
-
-impl ToTokens for EnumDefinition {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let visiblity = self.visiblity.as_ref();
-        let enum_token = &self.enum_token;
-        let name = &self.name;
-        let generic_parameters = self.generic_parameters();
-
-        tokens.extend(quote! {
-            #visiblity #enum_token #name #generic_parameters
-        });
     }
 }
 
@@ -385,7 +322,6 @@ impl Diagnostic {
         });
 
         quote! {
-            #[derive(Debug, Clone)]
             #definition {
                 #(
                     #enum_variants,
@@ -453,7 +389,7 @@ impl Parse for Diagnostics {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut diagnostics = Vec::new();
 
-        while input.peek(Token![enum]) || input.peek(Token![pub]) {
+        while input.peek(Token![enum]) || input.peek(Token![pub]) || input.peek(Token![#]) {
             diagnostics.push(input.parse()?);
         }
 
@@ -551,7 +487,6 @@ impl DiagnosticNote {
         });
 
         quote! {
-            #[derive(Debug, Clone)]
             #definition {
                 #(
                     #enum_variants,

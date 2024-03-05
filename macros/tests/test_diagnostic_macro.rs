@@ -5,6 +5,7 @@ use juice_core::diag::{Colored, DiagnosticCode, DiagnosticKind};
 use juice_macros::diagnostic;
 
 diagnostic!(
+    #[derive(Debug, Clone)]
     pub enum Diagnostic<'a> {
         [error] SimpleError => "This is a simple error",
         [warning] SimpleWarning => "This is a simple warning",
@@ -20,6 +21,7 @@ diagnostic!(
         [warning] WarningWithColoredArg(colored: into Colored<u32>) => "This is a warning with a colored argument: {}",
     }
 
+    #[derive(Debug, Clone)]
     pub enum StaticDiagnostic<'a> {
         [error] StaticError => "This is a static error",
         [warning] StaticWarning => "This is a static warning",

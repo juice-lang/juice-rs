@@ -5,6 +5,7 @@ use juice_core::diag::Colored;
 use juice_macros::diagnostic_note;
 
 diagnostic_note!(
+    #[derive(Debug, Clone)]
     pub enum DiagnosticNote<'a> {
         SimpleNote => "This is a simple note",
         NoteWithArg(number: u32) => "This is a note with an argument: {}",
