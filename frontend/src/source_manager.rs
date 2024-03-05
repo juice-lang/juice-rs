@@ -106,15 +106,15 @@ pub struct Source<'a> {
 }
 
 impl<'a> Source<'a> {
-    pub fn get_filepath_str(&self) -> &str {
+    pub fn get_filepath_str(&self) -> &'a str {
         self.source_manager.rodeo.resolve(&self.key)
     }
 
-    pub fn get_filepath(&self) -> &Path {
+    pub fn get_filepath(&self) -> &'a Path {
         Path::new(self.get_filepath_str())
     }
 
-    pub fn get_contents(&self) -> &str {
+    pub fn get_contents(&self) -> &'a str {
         &self.source_manager.sources[&self.key].0
     }
 
@@ -122,7 +122,7 @@ impl<'a> Source<'a> {
         self.source_manager.sources[&self.key].0.clone()
     }
 
-    pub(crate) fn get_ariadne_source(&self) -> &ariadne::Source<Arc<str>> {
+    pub(crate) fn get_ariadne_source(&self) -> &'a ariadne::Source<Arc<str>> {
         &self.source_manager.sources[&self.key].1
     }
 }

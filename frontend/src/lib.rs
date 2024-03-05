@@ -1,5 +1,6 @@
 mod diag;
 mod error;
+mod parser;
 mod runner;
 mod source_loc;
 mod source_manager;

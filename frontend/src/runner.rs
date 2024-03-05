@@ -11,6 +11,14 @@ use crate::{
     Result,
 };
 
+macro_rules! check_error {
+    ($diagnostics:expr) => {
+        if $diagnostics.had_error() {
+            return Ok(false);
+        }
+    };
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Action {
     DumpParse,
@@ -73,6 +81,8 @@ impl Runner {
             .with_context_note(def_loc, DiagnosticContextNote::variable_defined_here("a"))
             .diagnose()?;
 
-        Ok(!diagnostics.had_error())
+        check_error!(diagnostics);
+
+        Ok(true)
     }
 }
