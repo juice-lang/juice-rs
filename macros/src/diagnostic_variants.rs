@@ -1,5 +1,3 @@
-use std::fmt::{Display, Formatter, Result as FmtResult};
-
 use convert_case::{Case, Casing as _};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
@@ -11,33 +9,7 @@ use syn::{
     Ident, Lifetime, LitStr, Result, Token, Type, Visibility,
 };
 
-macro_rules! error {
-    ($($name: ident => $message: literal,)*) => {
-        enum Error {
-            $(
-                $name,
-            )*
-        }
-
-        impl Display for Error {
-            fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-                let message = match self {
-                    $(
-                        Self::$name => $message,
-                    )*
-                };
-
-                write!(f, "{}", message)
-            }
-        }
-    }
-}
-
-error! {
-    ExpectedDiagnosticKind => "Expected either 'error' or 'warning'",
-    FieldNamedColor => "Diagnostic fields cannot be named 'color'",
-    NoFieldsWithFormat => "Format string contains a placeholder but no fields were provided",
-}
+use super::Error;
 
 mod keyword {
     use super::*;
@@ -160,7 +132,7 @@ impl DiagnosticField {
         let ty = &self.ty;
 
         let ty = if self.is_into {
-            quote! { impl Into<#ty> }
+            quote! { impl ::core::convert::Into<#ty> }
         } else {
             quote! { #ty }
         };
@@ -441,7 +413,10 @@ impl Diagnostic {
                     }
                 }
 
-                pub fn into_formatted_message(self, color: impl Into<Option<::ariadne::Color>>) -> String {
+                pub fn into_formatted_message(
+                    self,
+                    color: impl ::core::convert::Into<::core::option::Option<::ariadne::Color>>
+                ) -> String {
                     let color: Option<::ariadne::Color> = color.into();
 
                     match self {
@@ -588,7 +563,10 @@ impl DiagnosticNote {
                     #constructor_functions
                 )*
 
-                pub fn into_formatted_message(self, color: impl Into<Option<::ariadne::Color>>) -> String {
+                pub fn into_formatted_message(
+                    self,
+                    color: impl ::core::convert::Into<::core::option::Option<::ariadne::Color>>
+                ) -> String {
                     let color: Option<::ariadne::Color> = color.into();
 
                     match self {
