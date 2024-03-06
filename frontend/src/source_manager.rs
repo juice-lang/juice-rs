@@ -9,7 +9,10 @@ use std::{
 
 use lasso::{Rodeo, Spur};
 
-use crate::Result;
+use crate::{
+    source_loc::{SourceLoc, SourceRange},
+    Result,
+};
 
 #[derive(Debug)]
 pub struct SourceManager {
@@ -27,7 +30,7 @@ impl SourceManager {
 
         let main_source_key = rodeo.get_or_intern(main_source_filepath_str);
 
-        let main_source = Arc::<str>::from(std::fs::read_to_string(&main_source_filepath)?);
+        let main_source = Arc::<str>::from(Self::read_to_string(&main_source_filepath)?);
         let ariadne_source = ariadne::Source::from(main_source.clone());
 
         let mut sources = HashMap::new();
@@ -52,7 +55,7 @@ impl SourceManager {
         } else {
             let key = self.rodeo.get_or_intern(filepath_str);
 
-            let source = Arc::<str>::from(std::fs::read_to_string(&filepath)?);
+            let source = Arc::<str>::from(Self::read_to_string(&filepath)?);
             let ariadne_source = ariadne::Source::from(source.clone());
 
             self.sources.insert(key, (source, ariadne_source));
@@ -80,6 +83,16 @@ impl SourceManager {
             source_manager: self,
             iter: self.sources.keys(),
         }
+    }
+
+    fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
+        let mut string = std::fs::read_to_string(path)?;
+
+        if !string.ends_with('\n') {
+            string.push('\n');
+        }
+
+        Ok(string)
     }
 }
 
@@ -120,6 +133,14 @@ impl<'a> Source<'a> {
 
     pub fn get_contents_owned(&self) -> Arc<str> {
         self.source_manager.sources[&self.key].0.clone()
+    }
+
+    pub fn get_loc(&self, offset: usize) -> SourceLoc<'a> {
+        SourceLoc::new(*self, offset)
+    }
+
+    pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'a> {
+        SourceRange::new(*self, start, end)
     }
 
     pub(crate) fn get_ariadne_source(&self) -> &'a ariadne::Source<Arc<str>> {

@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     diag::{Diagnostic, DiagnosticContextNote, DiagnosticEngine},
+    parser::Lexer,
     source_loc::SourceRange,
     source_manager::SourceManager,
     Result,
@@ -70,19 +71,20 @@ impl Runner {
 
         let diagnostics = DiagnosticEngine::new(&source_manager);
 
-        let main_source = source_manager.get_main_source();
+        let lexer = Lexer::new(source_manager.get_main_source());
 
-        let borrow_loc = SourceRange::new(main_source, 66, 70);
-        let def_loc = SourceRange::new(main_source, 0, 5);
-
-        diagnostics
-            .report(borrow_loc.start_loc(), Diagnostic::cannot_borrow_let_mutable("a"))
-            .with_context_note(borrow_loc, DiagnosticContextNote::mutable_borrow_here())
-            .with_context_note(def_loc, DiagnosticContextNote::variable_defined_here("a"))
-            .diagnose()?;
+        match lexer.collect::<Result<Vec<_>, _>>() {
+            Ok(tokens) => {
+                for token in tokens {
+                    println!("{:?} {}", token.kind, token.source_range);
+                }
+            }
+            Err(err) => {
+                err.diagnose(&diagnostics)?;
+            }
+        }
 
         check_error!(diagnostics);
-
         Ok(true)
     }
 }

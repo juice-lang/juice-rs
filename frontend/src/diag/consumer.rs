@@ -1,4 +1,5 @@
-use ariadne::{ColorGenerator, Label, Report};
+use ariadne::{Color, ColorGenerator, Label, Report};
+use juice_core::diag::ColorExt as _;
 
 use super::{DiagnosticEngine, DiagnosticReport};
 use crate::{source_loc::SourceRange, Result};
@@ -39,7 +40,7 @@ impl DefaultConsumer {
         }
 
         if let Some(note) = note {
-            builder = builder.with_note(note.into_formatted_message(kind));
+            builder = builder.with_note(note.into_formatted_message(Color::note_color()));
         }
 
         builder.finish()

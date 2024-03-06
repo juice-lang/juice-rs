@@ -67,6 +67,10 @@ impl<'a> SourceRange<'a> {
     pub fn get_text(&self) -> &'a str {
         &self.source.get_contents()[self.start..self.end]
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
 }
 
 impl<'a> ariadne::Span for SourceRange<'a> {
@@ -82,5 +86,27 @@ impl<'a> ariadne::Span for SourceRange<'a> {
 
     fn end(&self) -> usize {
         self.end
+    }
+}
+
+impl<'a> Display for SourceRange<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match (
+            self.start_loc().get_line_and_column(),
+            self.end_loc().get_line_and_column(),
+        ) {
+            (Some((start_line, start_column)), Some((end_line, end_column))) => {
+                if start_line == end_line {
+                    write!(f, "{}:{}:{}-{}", self.source, start_line, start_column, end_column)
+                } else {
+                    write!(
+                        f,
+                        "{}:{}:{}-{}:{}",
+                        self.source, start_line, start_column, end_line, end_column
+                    )
+                }
+            }
+            _ => write!(f, "({} at offset {}-{})", self.source, self.start, self.end),
+        }
     }
 }

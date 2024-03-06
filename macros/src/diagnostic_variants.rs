@@ -1,4 +1,5 @@
 use convert_case::{Case, Casing as _};
+use itertools::Itertools as _;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
@@ -6,7 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::Paren,
-    Ident, LitStr, Result, Token, Type,
+    Expr, Ident, LitStr, Result, Token, Type,
 };
 
 use crate::{enum_def::EnumDefinition, Error};
@@ -60,6 +61,7 @@ impl ToTokens for DiagnosticKind {
 pub struct DiagnosticField {
     pub name: Ident,
     pub ty: Type,
+    pub default: Option<Expr>,
     pub is_into: bool,
 }
 
@@ -100,13 +102,27 @@ impl Parse for DiagnosticField {
 
         let ty = input.parse::<Type>()?;
 
-        Ok(Self { name, ty, is_into })
+        let default = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+
+            Some(input.parse()?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            name,
+            ty,
+            default,
+            is_into,
+        })
     }
 }
 
 pub struct DiagnosticMessageVariant {
     pub name: Ident,
-    pub fields: Vec<DiagnosticField>,
+    pub fields: Vec<(usize, DiagnosticField)>,
+    pub default_fields: Vec<(usize, DiagnosticField)>,
     pub format: LitStr,
 }
 
@@ -116,7 +132,7 @@ impl DiagnosticMessageVariant {
         let fields = if self.fields.is_empty() {
             None
         } else {
-            let fields = self.fields.iter().map(|field| {
+            let fields = self.fields.iter().map(|(_, field)| {
                 let name = &field.name;
                 let ty = &field.ty;
 
@@ -147,7 +163,7 @@ impl DiagnosticMessageVariant {
             let inner = if ignore_fields {
                 quote! { .. }
             } else {
-                let names = self.fields.iter().map(|field| &field.name);
+                let names = self.fields.iter().map(|(_, field)| &field.name);
 
                 quote! { #(#names),* }
             };
@@ -184,7 +200,17 @@ impl Parse for DiagnosticMessageVariant {
             return Err(syn::Error::new(format.span(), Error::NoFieldsWithFormat));
         }
 
-        Ok(Self { name, fields, format })
+        let (fields, default_fields) = fields
+            .into_iter()
+            .enumerate()
+            .partition(|(_, field)| field.default.is_none());
+
+        Ok(Self {
+            name,
+            fields,
+            default_fields,
+            format,
+        })
     }
 }
 
@@ -224,20 +250,25 @@ impl Diagnostic {
             let name = &variant.inner.name;
             let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
-            let arguments = variant.inner.fields.iter().map(|field| field.function_argument());
+            let arguments = variant.inner.fields.iter().map(|(_, field)| field.function_argument());
 
-            let into_assignments = variant.inner.fields.iter().filter(|field| field.is_into).map(|field| {
-                let name = &field.name;
+            let into_assignments = variant
+                .inner
+                .fields
+                .iter()
+                .filter(|(_, field)| field.is_into)
+                .map(|(_, field)| {
+                    let name = &field.name;
 
-                quote! {
-                    let #name = #name.into();
-                }
-            });
+                    quote! {
+                        let #name = #name.into();
+                    }
+                });
 
             let fields = if variant.inner.fields.is_empty() {
                 None
             } else {
-                let field_names = variant.inner.fields.iter().map(|field| &field.name);
+                let field_names = variant.inner.fields.iter().map(|(_, field)| &field.name);
 
                 Some(quote! {
                     {
@@ -257,7 +288,7 @@ impl Diagnostic {
             }
         });
 
-        let match_value = if self.variants.is_empty() {
+        let match_value = if self.variants.is_empty() && self.definition.lifetime.is_none() {
             quote! { *self }
         } else {
             quote! { self }
@@ -300,14 +331,29 @@ impl Diagnostic {
 
             let format = &variant.inner.format;
 
-            let formatted_message = if variant.inner.fields.is_empty() {
+            let formatted_message = if variant.inner.fields.is_empty() && variant.inner.default_fields.is_empty() {
                 quote! { #format.to_string() }
             } else {
-                let colored_fields = variant.inner.fields.iter().map(|field| {
+                let fields = variant.inner.fields.iter();
+                let default_fields = variant.inner.default_fields.iter();
+                let colored_fields = fields.merge_by(default_fields, |a, b| a.0 < b.0).map(|(_, field)| {
                     let name = &field.name;
 
+                    let value = if let Some(default) = field.default.as_ref() {
+                        if field.is_into {
+                            let ty = &field.ty;
+                            quote! {
+                                <#ty>::from(#default)
+                            }
+                        } else {
+                            quote! { #default }
+                        }
+                    } else {
+                        quote! { #name }
+                    };
+
                     quote! {
-                        ::juice_core::diag::DiagnosticArg::with_color(#name, color)
+                        ::juice_core::diag::DiagnosticArg::with_color(#value, color)
                     }
                 });
 
@@ -321,13 +367,25 @@ impl Diagnostic {
             }
         });
 
+        let unreachable_variant = self.definition.lifetime.as_ref().map(|(_, lifetime, _)| {
+            quote! {
+                _Unreachable(::core::convert::Infallible, ::core::marker::PhantomData<&#lifetime ()>),
+            }
+        });
+
+        let unreachable_match_arm = self.definition.lifetime.as_ref().and(Some(quote! {
+            Self::_Unreachable(_, _) => unreachable!(),
+        }));
+
         quote! {
             #definition {
                 #(
                     #enum_variants,
                 )*
+                #unreachable_variant
             }
 
+            #[automatically_derived]
             impl #generic_parameters #name #generic_parameters {
                 #(
                     #constructor_functions
@@ -338,6 +396,7 @@ impl Diagnostic {
                         #(
                             #error_code_match_arms,
                         )*
+                        #unreachable_match_arm
                     }
                 }
 
@@ -346,6 +405,7 @@ impl Diagnostic {
                         #(
                             #diagnostic_kind_match_arms,
                         )*
+                        #unreachable_match_arm
                     }
                 }
 
@@ -359,6 +419,7 @@ impl Diagnostic {
                         #(
                             #message_match_arms,
                         )*
+                        #unreachable_match_arm
                     }
                 }
             }
@@ -427,20 +488,24 @@ impl DiagnosticNote {
             let name = &variant.name;
             let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
-            let arguments = variant.fields.iter().map(|field| field.function_argument());
+            let arguments = variant.fields.iter().map(|(_, field)| field.function_argument());
 
-            let into_assignments = variant.fields.iter().filter(|field| field.is_into).map(|field| {
-                let name = &field.name;
+            let into_assignments = variant
+                .fields
+                .iter()
+                .filter(|(_, field)| field.is_into)
+                .map(|(_, field)| {
+                    let name = &field.name;
 
-                quote! {
-                    let #name = #name.into();
-                }
-            });
+                    quote! {
+                        let #name = #name.into();
+                    }
+                });
 
             let fields = if variant.fields.is_empty() {
                 None
             } else {
-                let field_names = variant.fields.iter().map(|field| &field.name);
+                let field_names = variant.fields.iter().map(|(_, field)| &field.name);
 
                 Some(quote! {
                     {
@@ -465,14 +530,29 @@ impl DiagnosticNote {
 
             let format = &variant.format;
 
-            let formatted_message = if variant.fields.is_empty() {
+            let formatted_message = if variant.fields.is_empty() && variant.default_fields.is_empty() {
                 quote! { #format.to_string() }
             } else {
-                let colored_fields = variant.fields.iter().map(|field| {
+                let fields = variant.fields.iter();
+                let default_fields = variant.default_fields.iter();
+                let colored_fields = fields.merge_by(default_fields, |a, b| a.0 < b.0).map(|(_, field)| {
                     let name = &field.name;
 
+                    let value = if let Some(default) = field.default.as_ref() {
+                        if field.is_into {
+                            let ty = &field.ty;
+                            quote! {
+                                <#ty>::from(#default)
+                            }
+                        } else {
+                            quote! { #default }
+                        }
+                    } else {
+                        quote! { #name }
+                    };
+
                     quote! {
-                        ::juice_core::diag::DiagnosticArg::with_color(#name, color)
+                        ::juice_core::diag::DiagnosticArg::with_color(#value, color)
                     }
                 });
 
@@ -486,13 +566,25 @@ impl DiagnosticNote {
             }
         });
 
+        let unreachable_variant = self.definition.lifetime.as_ref().map(|(_, lifetime, _)| {
+            quote! {
+                _Unreachable(::core::convert::Infallible, ::core::marker::PhantomData<&#lifetime ()>),
+            }
+        });
+
+        let unreachable_match_arm = self.definition.lifetime.as_ref().and(Some(quote! {
+            Self::_Unreachable(_, _) => unreachable!(),
+        }));
+
         quote! {
             #definition {
                 #(
                     #enum_variants,
                 )*
+                #unreachable_variant
             }
 
+            #[automatically_derived]
             impl #generic_parameters #name #generic_parameters {
                 #(
                     #constructor_functions
@@ -508,6 +600,7 @@ impl DiagnosticNote {
                         #(
                             #message_match_arms,
                         )*
+                        #unreachable_match_arm
                     }
                 }
             }

@@ -1,3 +1,5 @@
+#![feature(generic_nonzero, iter_advance_by)]
+
 mod diag;
 mod error;
 mod parser;

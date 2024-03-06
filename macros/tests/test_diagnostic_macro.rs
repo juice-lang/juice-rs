@@ -19,6 +19,12 @@ diagnostic!(
         [warning] WarningWithIntoArg(string: into String) => "This is a warning with an into argument: {}",
         [error] ErrorWithColoredArg(colored: into Colored<u32>) => "This is an error with a colored argument: {}",
         [warning] WarningWithColoredArg(colored: into Colored<u32>) => "This is a warning with a colored argument: {}",
+        [error] ErrorWithDefaultArg(string: &str = "hello") => "This is an error with a default argument: {}",
+        [warning] WarningWithDefaultArg(string: &str = "hello") => "This is a warning with a default argument: {}",
+        [error] ErrorWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
+            "This is an error with a default into argument: {}",
+        [warning] WarningWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
+            "This is a warning with a default into argument: {}",
     }
 
     #[derive(Debug, Clone)]
@@ -37,6 +43,14 @@ diagnostic!(
             "This is a static error with a colored argument: {}",
         [warning] StaticWarningWithColoredArg(colored: into Colored<u32>) =>
             "This is a static warning with a colored argument: {}",
+        [error] StaticErrorWithDefaultArg(string: &str = "hello") =>
+            "This is a static error with a default argument: {}",
+        [warning] StaticWarningWithDefaultArg(string: &str = "hello") =>
+            "This is a static warning with a default argument: {}",
+        [error] StaticErrorWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
+            "This is a static error with a default into argument: {}",
+        [warning] StaticWarningWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
+            "This is a static warning with a default into argument: {}",
     }
 );
 
@@ -249,9 +263,69 @@ mod tests {
     }
 
     #[test]
+    fn test_error_with_default_arg() {
+        let diagnostic = Diagnostic::error_with_default_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 10));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is an error with a default argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Red)),
+            "This is an error with a default argument: hello"
+        );
+    }
+
+    #[test]
+    fn test_warning_with_default_arg() {
+        let diagnostic = Diagnostic::warning_with_default_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 11));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a warning with a default argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Red)),
+            "This is a warning with a default argument: hello"
+        );
+    }
+
+    #[test]
+    fn test_error_with_default_into_arg() {
+        let diagnostic = Diagnostic::error_with_default_into_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 12));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is an error with a default into argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Red)),
+            "This is an error with a default into argument: \u{1b}[31mhello\u{1b}[0m"
+        );
+    }
+
+    #[test]
+    fn test_warning_with_default_into_arg() {
+        let diagnostic = Diagnostic::warning_with_default_into_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 13));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a warning with a default into argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Yellow)),
+            "This is a warning with a default into argument: \u{1b}[33mhello\u{1b}[0m"
+        );
+    }
+
+    #[test]
     fn test_static_error() {
         let diagnostic = StaticDiagnostic::static_error();
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 10));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 14));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -266,7 +340,7 @@ mod tests {
     #[test]
     fn test_static_warning() {
         let diagnostic = StaticDiagnostic::static_warning();
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 11));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 15));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -281,7 +355,7 @@ mod tests {
     #[test]
     fn test_static_error_with_arg() {
         let diagnostic = StaticDiagnostic::static_error_with_arg(42);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 12));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 16));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -296,7 +370,7 @@ mod tests {
     #[test]
     fn test_static_warning_with_arg() {
         let diagnostic = StaticDiagnostic::static_warning_with_arg("hello");
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 13));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 17));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -311,7 +385,7 @@ mod tests {
     #[test]
     fn test_static_error_with_many_args() {
         let diagnostic = StaticDiagnostic::static_error_with_many_args(42, -42, 3.14, "hello");
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 14));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 18));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -326,7 +400,7 @@ mod tests {
     #[test]
     fn test_static_warning_with_many_args() {
         let diagnostic = StaticDiagnostic::static_warning_with_many_args(42, -42, 3.14, "hello");
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 15));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 19));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -342,7 +416,7 @@ mod tests {
     fn test_static_error_with_into_arg() {
         let string = "hello";
         let diagnostic = StaticDiagnostic::static_error_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 16));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 20));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -355,7 +429,7 @@ mod tests {
 
         let string = String::from("hello");
         let diagnostic = StaticDiagnostic::static_error_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 16));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 20));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -368,7 +442,7 @@ mod tests {
 
         let string = Cow::Borrowed("hello");
         let diagnostic = StaticDiagnostic::static_error_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 16));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 20));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -384,7 +458,7 @@ mod tests {
     fn test_static_warning_with_into_arg() {
         let string = "hello";
         let diagnostic = StaticDiagnostic::static_warning_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 17));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 21));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -397,7 +471,7 @@ mod tests {
 
         let string = String::from("hello");
         let diagnostic = StaticDiagnostic::static_warning_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 17));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 21));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -410,7 +484,7 @@ mod tests {
 
         let string = Cow::Borrowed("hello");
         let diagnostic = StaticDiagnostic::static_warning_with_into_arg(string);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 17));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 21));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -425,7 +499,7 @@ mod tests {
     #[test]
     fn test_static_error_with_colored_arg() {
         let diagnostic = StaticDiagnostic::static_error_with_colored_arg(42);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 18));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 22));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -440,7 +514,7 @@ mod tests {
     #[test]
     fn test_static_warning_with_colored_arg() {
         let diagnostic = StaticDiagnostic::static_warning_with_colored_arg(42);
-        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 19));
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 23));
         assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
         assert_eq!(
             diagnostic.clone().into_formatted_message(None),
@@ -449,6 +523,66 @@ mod tests {
         assert_eq!(
             diagnostic.into_formatted_message(Some(Color::Yellow)),
             "This is a static warning with a colored argument: \u{1b}[33m42\u{1b}[0m"
+        );
+    }
+
+    #[test]
+    fn test_static_error_with_default_arg() {
+        let diagnostic = StaticDiagnostic::static_error_with_default_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 24));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a static error with a default argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Red)),
+            "This is a static error with a default argument: hello"
+        );
+    }
+
+    #[test]
+    fn test_static_warning_with_default_arg() {
+        let diagnostic = StaticDiagnostic::static_warning_with_default_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 25));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a static warning with a default argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Yellow)),
+            "This is a static warning with a default argument: hello"
+        );
+    }
+
+    #[test]
+    fn test_static_error_with_default_into_arg() {
+        let diagnostic = StaticDiagnostic::static_error_with_default_into_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Error, 26));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Error);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a static error with a default into argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Red)),
+            "This is a static error with a default into argument: \u{1b}[31mhello\u{1b}[0m"
+        );
+    }
+
+    #[test]
+    fn test_static_warning_with_default_into_arg() {
+        let diagnostic = StaticDiagnostic::static_warning_with_default_into_arg();
+        assert_eq!(diagnostic.get_code(), DiagnosticCode::new(DiagnosticKind::Warning, 27));
+        assert_eq!(diagnostic.get_kind(), DiagnosticKind::Warning);
+        assert_eq!(
+            diagnostic.clone().into_formatted_message(None),
+            "This is a static warning with a default into argument: hello"
+        );
+        assert_eq!(
+            diagnostic.into_formatted_message(Some(Color::Yellow)),
+            "This is a static warning with a default into argument: \u{1b}[33mhello\u{1b}[0m"
         );
     }
 }

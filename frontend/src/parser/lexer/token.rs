@@ -1,17 +1,26 @@
-use juice_macros::string_enum;
-
+use super::TokenKind;
 use crate::source_loc::SourceRange;
-
-string_enum! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum KeywordKind {}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {}
 
 #[derive(Debug)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub source_range: SourceRange<'a>,
+    pub leading_whitespace_range: SourceRange<'a>,
+    pub has_trailing_whitespace: bool,
+}
+
+impl<'a> Token<'a> {
+    pub fn new(
+        kind: TokenKind,
+        source_range: SourceRange<'a>,
+        leading_whitespace_range: SourceRange<'a>,
+        has_trailing_whitespace: bool,
+    ) -> Self {
+        Self {
+            kind,
+            source_range,
+            leading_whitespace_range,
+            has_trailing_whitespace,
+        }
+    }
 }

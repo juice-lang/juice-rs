@@ -1,22 +1,26 @@
 use ariadne::{Color, Fmt as _};
+use juice_core::diag::ColorExt as _;
 
 use super::{DiagnosticNote, StaticDiagnostic};
 
 #[must_use = "report does nothing unless diagnosed"]
-pub struct StaticReport {
-    diagnostic: StaticDiagnostic,
-    note: Option<DiagnosticNote>,
+pub struct StaticReport<'a> {
+    diagnostic: StaticDiagnostic<'a>,
+    note: Option<DiagnosticNote<'a>>,
 }
 
-impl StaticReport {
-    pub fn new(diagnostic: StaticDiagnostic) -> Self {
+impl<'a> StaticReport<'a> {
+    pub fn new(diagnostic: StaticDiagnostic<'a>) -> Self {
         Self { diagnostic, note: None }
     }
 
-    pub fn with_note(self, note: DiagnosticNote) -> Self {
+    pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> StaticReport<'b>
+    where
+        'a: 'b,
+    {
         StaticReport {
-            diagnostic: self.diagnostic,
             note: Some(note),
+            ..self
         }
     }
 
@@ -31,8 +35,8 @@ impl StaticReport {
             eprintln!(
                 "\n{}{}: {}\n",
                 " ".repeat(id_len - 5),
-                "Note".fg(Color::Fixed(115)),
-                note.into_formatted_message(kind)
+                "Note".fg(Color::note_color()),
+                note.into_formatted_message(Color::note_color())
             );
         }
     }

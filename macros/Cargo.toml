@@ -13,6 +13,7 @@ quote = "*"
 syn = { version = "*", features = ["extra-traits"] }
 proc-macro2 = "*"
 convert_case = "0.6.0"
+itertools = "0.12.1"
 
 [dev-dependencies]
 ariadne = { workspace = true }

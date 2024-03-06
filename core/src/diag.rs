@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     fmt::{Display, Formatter, Result as FmtResult},
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -8,6 +9,26 @@ use ariadne::{Color, Fmt as _, ReportKind};
 
 mod private {
     pub trait Sealed {}
+}
+
+pub trait ColorExt {
+    fn error_color() -> Self;
+    fn warning_color() -> Self;
+    fn note_color() -> Self;
+}
+
+impl ColorExt for Color {
+    fn error_color() -> Self {
+        Color::Red
+    }
+
+    fn warning_color() -> Self {
+        Color::Yellow
+    }
+
+    fn note_color() -> Self {
+        Color::Fixed(115)
+    }
 }
 
 pub trait DiagnosticArg: private::Sealed {
@@ -67,6 +88,14 @@ diagnostic_arg!(
     Cow<'_, str>
 );
 
+impl<T> private::Sealed for PhantomData<T> {}
+
+impl<T> DiagnosticArg for PhantomData<T> {
+    fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
+        "PhantomData"
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
     Error,
@@ -104,8 +133,8 @@ impl From<DiagnosticKind> for ReportKind<'_> {
 impl From<DiagnosticKind> for Option<Color> {
     fn from(kind: DiagnosticKind) -> Self {
         Some(match kind {
-            DiagnosticKind::Error => Color::Red,
-            DiagnosticKind::Warning => Color::Yellow,
+            DiagnosticKind::Error => Color::error_color(),
+            DiagnosticKind::Warning => Color::warning_color(),
         })
     }
 }

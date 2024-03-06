@@ -57,7 +57,7 @@ pub struct Report<'a, C: DiagnosticConsumer> {
     pub source_loc: SourceLoc<'a>,
     pub diagnostic: Diagnostic<'a>,
     pub context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
-    pub note: Option<DiagnosticNote>,
+    pub note: Option<DiagnosticNote<'a>>,
     engine: &'a Engine<'a, C>,
 }
 
@@ -74,7 +74,7 @@ impl<'a, C: DiagnosticConsumer> Report<'a, C> {
 
     pub fn with_context_note<'b>(
         self,
-        source_range: SourceRange<'a>,
+        source_range: SourceRange<'b>,
         context_note: DiagnosticContextNote<'b>,
     ) -> Report<'b, C>
     where
@@ -83,22 +83,16 @@ impl<'a, C: DiagnosticConsumer> Report<'a, C> {
         let mut context_notes = self.context_notes;
         context_notes.push((source_range, context_note));
 
-        Report {
-            source_loc: self.source_loc,
-            diagnostic: self.diagnostic,
-            context_notes,
-            note: self.note,
-            engine: self.engine,
-        }
+        Report { context_notes, ..self }
     }
 
-    pub fn with_note(self, note: DiagnosticNote) -> Self {
+    pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> Report<'b, C>
+    where
+        'a: 'b,
+    {
         Report {
-            source_loc: self.source_loc,
-            diagnostic: self.diagnostic,
-            context_notes: self.context_notes,
             note: Some(note),
-            engine: self.engine,
+            ..self
         }
     }
 
