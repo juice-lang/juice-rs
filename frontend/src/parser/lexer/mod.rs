@@ -1,10 +1,13 @@
+mod fsm;
+mod literal;
 mod token;
 mod token_kind;
 
-use std::num::NonZero;
+use std::{mem::MaybeUninit, num::NonZero};
 
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
+use self::literal::LiteralKind;
 pub use self::{token::Token, token_kind::TokenKind};
 use crate::{
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
@@ -18,6 +21,7 @@ pub struct Error<'a> {
     pub diagnostic: Diagnostic<'a>,
     pub context_note: DiagnosticContextNote<'a>,
     pub note: Option<DiagnosticNote<'a>>,
+    pub at_end: bool,
 }
 
 impl<'a> Error<'a> {
@@ -25,12 +29,14 @@ impl<'a> Error<'a> {
         source_range: SourceRange<'a>,
         diagnostic: Diagnostic<'a>,
         context_note: DiagnosticContextNote<'a>,
+        at_end: bool,
     ) -> Self {
         Self {
             source_range,
             diagnostic,
             context_note,
             note: None,
+            at_end,
         }
     }
 
@@ -48,8 +54,14 @@ impl<'a> Error<'a> {
     where
         'a: 'b,
     {
+        let source_loc = if self.at_end {
+            self.source_range.end_loc()
+        } else {
+            self.source_range.start_loc()
+        };
+
         let mut report = diagnostics
-            .report(self.source_range.start_loc(), self.diagnostic)
+            .report(source_loc, self.diagnostic)
             .with_context_note(self.source_range, self.context_note);
 
         if let Some(note) = self.note {
@@ -62,14 +74,18 @@ impl<'a> Error<'a> {
 
 pub type LexerResult<'a> = Result<Token<'a>, Error<'a>>;
 
+#[derive(Debug)]
 pub struct Lexer<'a> {
     source: Source<'a>,
     chars: PeekableChars<'a>,
     start: usize,
     current: usize,
     leading_whitespace_start: usize,
+    is_nested: bool,
+    brace_depth: isize,
 }
 
+#[allow(clippy::result_large_err)]
 impl<'a> Lexer<'a> {
     pub fn new(source: Source<'a>) -> Self {
         let chars = source.get_contents().into();
@@ -79,12 +95,47 @@ impl<'a> Lexer<'a> {
             start: 0,
             current: 0,
             leading_whitespace_start: 0,
+            is_nested: false,
+            brace_depth: 0,
         }
+    }
+
+    pub fn with_nested<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mut res = MaybeUninit::uninit();
+        take_mut::take(self, |mut lexer| {
+            let mut nested_lexer = Lexer {
+                source: lexer.source,
+                chars: lexer.chars,
+                start: lexer.current,
+                current: lexer.current,
+                leading_whitespace_start: lexer.current,
+                is_nested: true,
+                brace_depth: 0,
+            };
+
+            res.write(f(&mut nested_lexer));
+
+            let Lexer {
+                source, chars, current, ..
+            } = nested_lexer;
+
+            lexer.source = source;
+            lexer.chars = chars;
+            lexer.current = current;
+
+            lexer
+        });
+
+        unsafe { res.assume_init() }
     }
 
     fn next_token(&mut self) -> Option<LexerResult<'a>> {
         self.start = self.current;
         self.leading_whitespace_start = self.current;
+
+        if self.is_nested && self.brace_depth == 0 && self.peek() == Some('}') {
+            return None;
+        }
 
         self.advance().and_then(|mut c| {
             loop {
@@ -121,60 +172,83 @@ impl<'a> Lexer<'a> {
             ')' => Tok![RightParen],
             '[' => Tok![LeftBracket],
             ']' => Tok![RightBracket],
-            '{' => Tok![LeftBrace],
-            '}' => Tok![RightBrace],
+            '{' => {
+                self.brace_depth += 1;
+
+                Tok![LeftBrace]
+            }
+            '}' => {
+                self.brace_depth -= 1;
+
+                Tok![RightBrace]
+            }
             ',' => Tok![,],
             ':' => Tok![:],
             ';' => Tok![;],
-            '#' => Tok![#],
             '@' => Tok![@],
             '?' => Tok![?],
             '.' => {
                 if self.match_char(CharExt::is_dot_operator) {
-                    while self.match_char(CharExt::is_dot_operator) {}
-                    return self.make_token(Tok![Op]);
+                    self.try_consume_operator(true)?
+                } else {
+                    Tok![.]
                 }
-
-                Tok![.]
             }
             '=' => {
                 if self.match_char_eq('>') {
-                    if self.match_char(CharExt::is_operator) {
-                        self.consume_operator()
+                    if self.peek().is_some_and(CharExt::is_operator) {
+                        self.try_consume_operator(false)?
                     } else {
                         Tok![=>]
                     }
-                } else if self.match_char(CharExt::is_operator) {
-                    self.consume_operator()
+                } else if self.peek().is_some_and(CharExt::is_operator) {
+                    self.try_consume_operator(false)?
                 } else {
                     Tok![=]
                 }
             }
             '-' => {
                 if self.match_char_eq('>') {
-                    if self.match_char(CharExt::is_operator) {
-                        self.consume_operator()
+                    if self.peek().is_some_and(CharExt::is_operator) {
+                        self.try_consume_operator(false)?
                     } else {
                         Tok![->]
                     }
                 } else {
-                    self.consume_operator()
+                    self.try_consume_operator(false)?
                 }
             }
             '&' => {
                 if self.peek() == Some('w') && self.peek2().is_none_or(|c| !c.is_identifier_char()) {
                     Tok![&w]
-                } else if self.match_char(CharExt::is_operator) {
-                    self.consume_operator()
+                } else if self.peek().is_some_and(CharExt::is_operator) {
+                    self.try_consume_operator(false)?
                 } else {
                     Tok![&]
                 }
             }
-            '"' => self.try_consume_string_literal()?,
+            '#' => {
+                if self.chars.peek_first_after_eq('#') == Some('"') {
+                    self.try_consume_string_literal(c)?
+                } else {
+                    Tok![#]
+                }
+            }
+            '*' => {
+                if self.match_char_eq('/') {
+                    return Err(self.error(
+                        Diagnostic::unexpected_comment_terminator(),
+                        DiagnosticContextNote::comment_terminator_location(),
+                    ));
+                } else {
+                    self.try_consume_operator(false)?
+                }
+            }
             '\'' => self.try_consume_char_literal()?,
-            _ if c.is_operator() => self.consume_operator(),
+            '"' => self.try_consume_string_literal(c)?,
             _ if c.is_identifier_start() => self.consume_identifier(),
-            _ if c.is_ascii_digit() => self.try_consume_number_literal()?,
+            _ if c.is_operator() => self.try_consume_operator(false)?,
+            _ if c.is_ascii_digit() => self.try_consume_number_literal(c)?,
             _ => {
                 return Err(self.error(
                     Diagnostic::invalid_character(c),
@@ -186,13 +260,7 @@ impl<'a> Lexer<'a> {
         self.make_token(token_kind)
     }
 
-    fn consume_operator(&mut self) -> TokenKind {
-        while self.match_char(CharExt::is_operator) {}
-
-        Tok![Op]
-    }
-
-    fn consume_identifier(&mut self) -> TokenKind {
+    fn consume_identifier(&mut self) -> TokenKind<'a> {
         while self.match_char(CharExt::is_identifier_char) {}
 
         self.get_current_range()
@@ -201,16 +269,52 @@ impl<'a> Lexer<'a> {
             .map_or(Tok![Ident], TokenKind::Keyword)
     }
 
-    fn try_consume_number_literal(&mut self) -> Result<TokenKind, Error<'a>> {
-        todo!()
+    fn try_consume_operator(&mut self, allow_dot: bool) -> Result<TokenKind<'a>, Error<'a>> {
+        let func = if allow_dot {
+            char::is_dot_operator
+        } else {
+            char::is_operator
+        };
+
+        loop {
+            match self.peek() {
+                Some('/') => {
+                    if matches!(self.peek2(), Some('/') | Some('*')) {
+                        break;
+                    }
+                }
+                Some('*') => {
+                    if self.peek2() == Some('/') {
+                        return Err(Error::new(
+                            self.source.get_range(self.current, self.current + 2),
+                            Diagnostic::unexpected_comment_terminator(),
+                            DiagnosticContextNote::comment_terminator_location(),
+                            false,
+                        )
+                        .with_note(DiagnosticNote::comment_terminator_in_operator()));
+                    }
+                }
+                _ => {}
+            }
+
+            if !self.match_char(func) {
+                break;
+            }
+        }
+
+        Ok(Tok![Op])
     }
 
-    fn try_consume_string_literal(&mut self) -> Result<TokenKind, Error<'a>> {
-        todo!()
+    fn try_consume_number_literal(&mut self, start: char) -> Result<TokenKind<'a>, Error<'a>> {
+        LiteralKind::parse_number(self, start).map(TokenKind::Literal)
     }
 
-    fn try_consume_char_literal(&mut self) -> Result<TokenKind, Error<'a>> {
-        todo!()
+    fn try_consume_char_literal(&mut self) -> Result<TokenKind<'a>, Error<'a>> {
+        LiteralKind::parse_char(self).map(TokenKind::Literal)
+    }
+
+    fn try_consume_string_literal(&mut self, start: char) -> Result<TokenKind<'a>, Error<'a>> {
+        LiteralKind::parse_string(self, start).map(TokenKind::Literal)
     }
 
     #[must_use]
@@ -237,26 +341,45 @@ impl<'a> Lexer<'a> {
         None
     }
 
-    fn make_token(&mut self, kind: TokenKind) -> LexerResult<'a> {
+    fn make_token(&mut self, kind: TokenKind<'a>) -> LexerResult<'a> {
         let has_trailing_whitespace = self.peek().is_some_and(|c| {
             CharExt::is_whitespace_or_newline(c) || (c == '/' && matches!(self.peek2(), Some('/') | Some('*')))
         });
 
-        let leading_whitespace_range = self.source.get_range(self.leading_whitespace_start, self.start);
         Ok(Token::new(
             kind,
             self.get_current_range(),
-            leading_whitespace_range,
+            self.get_leading_whitespace_range(),
             has_trailing_whitespace,
         ))
     }
 
     fn error(&mut self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
-        Error::new(self.get_current_range(), diagnostic, context_note)
+        Error::new(self.get_current_range(), diagnostic, context_note, false)
+    }
+
+    fn error_at_end(&mut self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
+        Error::new(self.get_current_range(), diagnostic, context_note, true)
+    }
+
+    fn error_at_next_character(
+        &mut self,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+    ) -> Error<'a> {
+        Error::new(self.get_next_character_range(), diagnostic, context_note, false)
     }
 
     fn get_current_range(&self) -> SourceRange<'a> {
         self.source.get_range(self.start, self.current)
+    }
+
+    fn get_next_character_range(&self) -> SourceRange<'a> {
+        self.source.get_range(self.current, self.current + 1)
+    }
+
+    fn get_leading_whitespace_range(&self) -> SourceRange<'a> {
+        self.source.get_range(self.leading_whitespace_start, self.start)
     }
 
     fn match_str(&mut self, expected: &str) -> bool {
@@ -269,18 +392,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn match_char_eq(&mut self, expected: char) -> bool {
-        self.chars.next_if_eq(expected).inspect(|_| self.current += 1).is_some()
+        self.match_char(|c| c == expected)
     }
 
     fn match_char_neq(&mut self, expected: char) -> bool {
-        self.chars
-            .next_if(|c| c != expected)
-            .inspect(|_| self.current += 1)
-            .is_some()
+        self.match_char(|c| c != expected)
     }
 
     fn match_char(&mut self, func: impl FnOnce(char) -> bool) -> bool {
-        self.chars.next_if(func).inspect(|_| self.current += 1).is_some()
+        self.advance_if(func).is_some()
     }
 
     fn advance_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
@@ -288,6 +408,10 @@ impl<'a> Lexer<'a> {
             .advance_by(n)
             .inspect(|_| self.current += n)
             .inspect_err(|k| self.current += n - k.get())
+    }
+
+    fn advance_if(&mut self, func: impl FnOnce(char) -> bool) -> Option<char> {
+        self.chars.next_if(func).inspect(|_| self.current += 1)
     }
 
     fn advance(&mut self) -> Option<char> {

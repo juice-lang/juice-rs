@@ -76,7 +76,13 @@ impl Runner {
         match lexer.collect::<Result<Vec<_>, _>>() {
             Ok(tokens) => {
                 for token in tokens {
-                    println!("{:?} {}", token.kind, token.source_range);
+                    println!(
+                        "{:?} {:?} {} {}",
+                        token.kind,
+                        token.source_range.get_text(),
+                        !token.leading_whitespace_range.is_empty(),
+                        token.has_trailing_whitespace
+                    );
                 }
             }
             Err(err) => {

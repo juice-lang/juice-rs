@@ -11,3 +11,5 @@ derive_more = { workspace = true }
 juice-core = { path = "../core" }
 juice-macros = { path = "../macros" }
 lasso = "0.7.2"
+num-bigint = "0.4.4"
+take_mut = "0.2.2"

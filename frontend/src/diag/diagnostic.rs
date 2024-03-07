@@ -6,6 +6,10 @@ diagnostic!(
     pub enum Diagnostic<'a> {
         [error] InvalidCharacter(c: into Colored<char>) => "Invalid character `{}` in source file",
         [error] UnterminatedComment => "Unterminated block comment",
+        [error] UnexpectedCommentTerminator => "Unexpected block comment terminator",
+        [error] InvalidDigit(digit_name: &'static str, c: into Colored<char>, literal_name: &'static str) =>
+            "Invalid {} `{}` in {} literal",
+        [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
     }
 
     #[derive(Debug, Clone)]

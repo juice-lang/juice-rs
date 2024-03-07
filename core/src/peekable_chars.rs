@@ -1,5 +1,6 @@
 use std::{num::NonZero, str::Chars};
 
+#[derive(Debug, Clone)]
 pub struct PeekableChars<'a>(Chars<'a>);
 
 impl<'a> PeekableChars<'a> {
@@ -11,6 +12,23 @@ impl<'a> PeekableChars<'a> {
         let mut chars = self.0.clone();
         chars.next();
         chars.next()
+    }
+
+    pub fn peek_first_after(&self, func: impl Fn(char) -> bool) -> Option<char> {
+        let mut chars = self.0.clone();
+        let peek = loop {
+            let next = chars.next()?;
+
+            if !func(next) {
+                break next;
+            }
+        };
+
+        Some(peek)
+    }
+
+    pub fn peek_first_after_eq(&self, expected: char) -> Option<char> {
+        self.peek_first_after(|next| next == expected)
     }
 
     pub fn next_if(&mut self, func: impl FnOnce(char) -> bool) -> Option<char> {

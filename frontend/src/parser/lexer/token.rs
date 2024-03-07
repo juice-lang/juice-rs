@@ -1,9 +1,9 @@
 use super::TokenKind;
 use crate::source_loc::SourceRange;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
-    pub kind: TokenKind,
+    pub kind: TokenKind<'a>,
     pub source_range: SourceRange<'a>,
     pub leading_whitespace_range: SourceRange<'a>,
     pub has_trailing_whitespace: bool,
@@ -11,7 +11,7 @@ pub struct Token<'a> {
 
 impl<'a> Token<'a> {
     pub fn new(
-        kind: TokenKind,
+        kind: TokenKind<'a>,
         source_range: SourceRange<'a>,
         leading_whitespace_range: SourceRange<'a>,
         has_trailing_whitespace: bool,

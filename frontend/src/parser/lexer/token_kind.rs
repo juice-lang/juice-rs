@@ -1,5 +1,7 @@
 use juice_macros::string_enum;
 
+use super::literal::LiteralKind;
+
 string_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum KeywordKind {}
@@ -19,7 +21,6 @@ string_enum! {
         Comma = ",",
         Colon = ":",
         Semicolon = ";",
-        Pound = "#",
         At = "@",
         QuestionMark = "?",
         Dot = ".",
@@ -28,22 +29,15 @@ string_enum! {
         Arrow = "->",
         Ampersand = "&",
         AmpersandW = "&w",
+        NumberSign = "#",
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiteralKind {
-    Int,
-    Float,
-    Char,
-    String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {
+#[derive(Debug, Clone)]
+pub enum TokenKind<'a> {
     Keyword(KeywordKind),
     Punctuation(PunctuationKind),
-    Literal(LiteralKind),
+    Literal(LiteralKind<'a>),
     Identifier,
     Operator,
 }
@@ -104,9 +98,6 @@ macro_rules! Tok {
     (;) => {
         $crate::punctuation_kind!(Semicolon)
     };
-    (#) => {
-        $crate::punctuation_kind!(Pound)
-    };
     (@) => {
         $crate::punctuation_kind!(At)
     };
@@ -131,17 +122,8 @@ macro_rules! Tok {
     (&w) => {
         $crate::punctuation_kind!(AmpersandW)
     };
-    (Int) => {
-        $crate::literal_kind!(Int)
-    };
-    (Float) => {
-        $crate::literal_kind!(Float)
-    };
-    (Char) => {
-        $crate::literal_kind!(Char)
-    };
-    (String) => {
-        $crate::literal_kind!(String)
+    (#) => {
+        $crate::punctuation_kind!(NumberSign)
     };
     (Ident) => {
         $crate::parser::lexer::TokenKind::Identifier
