@@ -11,6 +11,7 @@ pub trait CharExt: Sized {
     fn is_decimal_digit(self) -> bool;
     fn is_hex_digit(self) -> bool;
     fn is_number_end(self) -> bool;
+    fn is_string_escape(self) -> bool;
 }
 
 macro_rules! impl_char_ext {
@@ -51,4 +52,5 @@ impl_char_ext! {
     is_decimal_digit => self.is_ascii_digit();
     is_hex_digit => self.is_ascii_hexdigit();
     is_number_end => !self.is_identifier_char();
+    is_string_escape => matches!(self, '0' | '\\' | 't' | 'n' | 'r' | '"' | '\'' | '$');
 }

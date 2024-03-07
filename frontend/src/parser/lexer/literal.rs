@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::{iter::Peekable, sync::Arc};
 
 use num_bigint::BigUint;
 
 use super::{
-    fsm::{Fsm as _, NumberFsm, NumberFsmState},
+    fsm::{Fsm as _, NumberFsm, NumberFsmState, StringFsm, StringFsmState, StringFsmStateKind},
     Error, Lexer, Token,
 };
 use crate::{
     diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
+    source_loc::SourceRange,
     Result,
 };
 
@@ -99,16 +100,8 @@ impl<'a> LiteralKind<'a> {
         })
     }
 
-    pub fn parse_char(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {
-        todo!()
-    }
-
-    pub fn parse_string(lexer: &mut Lexer<'a>, start: char) -> Result<Self, Error<'a>> {
-        todo!()
-    }
-
     fn parse_int(lexer: &Lexer, radix: Radix) -> Self {
-        let mut string = lexer.get_current_range().get_text();
+        let mut string = lexer.get_current_range().get_str();
 
         if radix != Radix::Decimal {
             string = &string[2..];
@@ -132,7 +125,208 @@ impl<'a> LiteralKind<'a> {
     }
 
     fn parse_float(lexer: &Lexer) -> Self {
-        let string = lexer.get_current_range().get_text();
+        let string = lexer.get_current_range().get_str();
         todo!()
+    }
+
+    pub fn parse_char(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {
+        todo!()
+    }
+
+    pub fn parse_string(lexer: &mut Lexer<'a>, start: char) -> Result<Self, Error<'a>> {
+        use StringFsmStateKind::*;
+
+        if start == '#' {
+            return Self::parse_raw_string(lexer);
+        }
+
+        Ok(
+            match StringFsm::run(lexer, StringFsmState::new(StringStart(1), false)) {
+                StringFsmState {
+                    kind: StringEnd(1),
+                    multiline: false,
+                } => {
+                    let source_range = lexer.source.get_range(lexer.start + 1, lexer.current - 1);
+                    let string = Self::parse_string_part(source_range)?;
+                    Self::String(string)
+                }
+                StringFsmState {
+                    kind: StringEnd(3),
+                    multiline: true,
+                } => {
+                    let source_range = lexer.source.get_range(lexer.start + 3, lexer.current - 3);
+
+                    let string = source_range.get_str();
+                    if string.is_empty() {
+                        Self::String(Arc::from(""))
+                    } else {
+                        let indentation = string
+                            .rfind(|c| !matches!(c, ' ' | '\t'))
+                            .and_then(|indentation_start| {
+                                let string = &string[indentation_start..];
+
+                                if string.starts_with(|c| matches!(c, '\n' | '\r')) {
+                                    Some(SourceRange::new(
+                                        source_range.source,
+                                        source_range.start + indentation_start + 1,
+                                        source_range.end,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            });
+
+                        let string = Self::parse_multiline_string_part(source_range, indentation, true, true)?;
+                        Self::String(string)
+                    }
+                }
+                _ => todo!(),
+            },
+        )
+    }
+
+    fn parse_string_interpolation(
+        lexer: &mut Lexer<'a>,
+        first_part: SourceRange<'a>,
+        multiline: bool,
+    ) -> Result<Self, Error<'a>> {
+        todo!()
+    }
+
+    fn parse_string_part(source_range: SourceRange<'a>) -> Result<Arc<str>, Error<'a>> {
+        let mut parsed = String::new();
+
+        let mut chars = source_range.get_str().chars().enumerate().peekable();
+        while let Some((_, c)) = chars.next() {
+            if c == '\\' {
+                let escape_sequence = Self::consume_escape_sequence(source_range, &mut chars)?;
+                parsed.push(escape_sequence);
+            } else {
+                parsed.push(c);
+            }
+        }
+
+        Ok(Arc::from(parsed))
+    }
+
+    fn parse_multiline_string_part(
+        source_range: SourceRange<'a>,
+        indentation: Option<SourceRange<'a>>,
+        is_first: bool,
+        is_last: bool,
+    ) -> Result<Arc<str>, Error<'a>> {
+        let mut parsed = String::new();
+
+        let mut chars = source_range.get_str().chars().enumerate().peekable();
+        while let Some((_, c)) = chars.next() {
+            match c {
+                '\r' => {
+                    chars.next_if(|(_, c)| *c == '\n');
+
+                    parsed.push('\n');
+                }
+                '\n' => {
+                    parsed.push('\n');
+                }
+                '\\' => {
+                    if chars.next_if(|(_, c)| *c == '\r').is_some() {
+                        chars.next_if(|(_, c)| *c == '\n');
+                    } else if chars.next_if(|(_, c)| *c == '\n').is_none() {
+                        let escape_sequence = Self::consume_escape_sequence(source_range, &mut chars)?;
+                        parsed.push(escape_sequence);
+
+                        continue;
+                    }
+                }
+                _ => {
+                    parsed.push(c);
+                    continue;
+                }
+            }
+
+            if let Some(indentation) = indentation {
+                for indent in indentation.get_str().chars() {
+                    if chars.next_if(|(_, c)| *c == indent).is_none() {
+                        let i = chars.peek().expect("Indentation should be valid here").0;
+                        return Err(Error::new(
+                            SourceRange::new(source_range.source, source_range.start + i, source_range.start + i + 1),
+                            Diagnostic::insufficient_indentation(),
+                            DiagnosticContextNote::line_start_location(),
+                            false,
+                        )
+                        .with_context_note(indentation, DiagnosticContextNote::indentation_location()));
+                    }
+                }
+            }
+        }
+
+        let mut parsed = parsed.as_str();
+
+        if is_first {
+            if let Some(stripped) = parsed.strip_prefix('\n') {
+                parsed = stripped;
+            }
+        }
+
+        if is_last {
+            if let Some(stripped) = parsed.strip_suffix('\n') {
+                parsed = stripped;
+            }
+        }
+
+        Ok(Arc::from(parsed))
+    }
+
+    fn parse_raw_string(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {
+        todo!()
+    }
+
+    fn consume_escape_sequence(
+        literal_range: SourceRange<'a>,
+        chars: &mut Peekable<impl Iterator<Item = (usize, char)>>,
+    ) -> Result<char, Error<'a>> {
+        Ok(match chars.next().expect("Escape sequence should be valid here").1 {
+            '0' => '\0',
+            '\\' => '\\',
+            't' => '\t',
+            'n' => '\n',
+            'r' => '\r',
+            '"' => '"',
+            '\'' => '\'',
+            '$' => '$',
+            'u' => {
+                let open = chars.next().expect("Escape sequence should be valid here");
+                assert_eq!(open.1, '{');
+
+                let mut code_point = 0;
+                for _ in 0..8 {
+                    let Some((_, c)) = chars.next_if(|(_, c)| *c != '}') else {
+                        break;
+                    };
+
+                    let digit = c.to_digit(16).expect("Escape sequence should be valid here");
+                    code_point = (code_point << 4) | digit;
+                }
+
+                let close = chars.next().expect("Escape sequence should be valid here");
+                assert_eq!(close.1, '}');
+
+                char::from_u32(code_point).ok_or_else(|| {
+                    let code_point_range = SourceRange::new(
+                        literal_range.source,
+                        literal_range.start + open.0 + 1,
+                        literal_range.start + close.0,
+                    );
+
+                    Error::new(
+                        code_point_range,
+                        Diagnostic::invalid_unicode_scalar(code_point_range.get_str()),
+                        DiagnosticContextNote::invalid_unicode_scalar_location(),
+                        false,
+                    )
+                })?
+            }
+            _ => unreachable!("Invalid escape sequence"),
+        })
     }
 }

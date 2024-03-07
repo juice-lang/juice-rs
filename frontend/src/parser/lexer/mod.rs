@@ -11,17 +11,16 @@ use self::literal::LiteralKind;
 pub use self::{token::Token, token_kind::TokenKind};
 use crate::{
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
-    source_loc::SourceRange,
+    source_loc::{SourceLoc, SourceRange},
     source_manager::Source,
     Result, Tok,
 };
 
 pub struct Error<'a> {
-    pub source_range: SourceRange<'a>,
+    pub source_loc: SourceLoc<'a>,
     pub diagnostic: Diagnostic<'a>,
-    pub context_note: DiagnosticContextNote<'a>,
+    pub context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
     pub note: Option<DiagnosticNote<'a>>,
-    pub at_end: bool,
 }
 
 impl<'a> Error<'a> {
@@ -31,13 +30,32 @@ impl<'a> Error<'a> {
         context_note: DiagnosticContextNote<'a>,
         at_end: bool,
     ) -> Self {
+        let source_loc = if at_end {
+            source_range.end_loc()
+        } else {
+            source_range.start_loc()
+        };
+
         Self {
-            source_range,
+            source_loc,
             diagnostic,
-            context_note,
+            context_notes: vec![(source_range, context_note)],
             note: None,
-            at_end,
         }
+    }
+
+    pub fn with_context_note<'b>(
+        self,
+        source_range: SourceRange<'b>,
+        context_note: DiagnosticContextNote<'b>,
+    ) -> Error<'b>
+    where
+        'a: 'b,
+    {
+        let mut context_notes = self.context_notes;
+        context_notes.push((source_range, context_note));
+
+        Error { context_notes, ..self }
     }
 
     pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> Error<'b>
@@ -54,15 +72,11 @@ impl<'a> Error<'a> {
     where
         'a: 'b,
     {
-        let source_loc = if self.at_end {
-            self.source_range.end_loc()
-        } else {
-            self.source_range.start_loc()
-        };
+        let mut report = diagnostics.report(self.source_loc, self.diagnostic);
 
-        let mut report = diagnostics
-            .report(source_loc, self.diagnostic)
-            .with_context_note(self.source_range, self.context_note);
+        for (source_range, context_note) in self.context_notes {
+            report = report.with_context_note(source_range, context_note);
+        }
 
         if let Some(note) = self.note {
             report = report.with_note(note);
@@ -264,7 +278,7 @@ impl<'a> Lexer<'a> {
         while self.match_char(CharExt::is_identifier_char) {}
 
         self.get_current_range()
-            .get_text()
+            .get_str()
             .parse()
             .map_or(Tok![Ident], TokenKind::Keyword)
     }

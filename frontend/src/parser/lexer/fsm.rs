@@ -223,3 +223,121 @@ impl Fsm for NumberFsm {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringFsmStateKind {
+    StringStart(usize),
+    String,
+    EscapeStart,
+    UnicodeEscapeStart,
+    UnicodeEscape(usize),
+    InterpolationStart,
+    Interpolation,
+    StringEnd(usize),
+    InvalidEscape,
+    MissingUnicodeEscapeBrace,
+    InvalidUnicodeEscapeDigit,
+    MissingUnicodeEscape,
+    OverlongUnicodeEscape,
+    MissingTerminator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StringFsmState {
+    pub kind: StringFsmStateKind,
+    pub multiline: bool,
+}
+
+impl StringFsmState {
+    pub fn new(kind: StringFsmStateKind, multiline: bool) -> Self {
+        Self { kind, multiline }
+    }
+}
+
+pub struct StringFsm;
+
+impl Fsm for StringFsm {
+    type State = StringFsmState;
+
+    fn next_state(state: Self::State, c: char, peek: Option<char>) -> Result<Self::State, Self::State> {
+        use StringFsmStateKind::*;
+
+        let StringFsmState { kind, multiline } = state;
+
+        let make_error = |kind| Err(StringFsmState::new(kind, multiline));
+
+        let kind = match (kind, c) {
+            (StringStart(1), '"') => {
+                if peek == Some('"') {
+                    return Ok(StringFsmState::new(StringStart(2), true));
+                } else {
+                    StringEnd(1)
+                }
+            }
+            (StringStart(1), '\\') => EscapeStart,
+            (StringStart(1), '$') if peek == Some('{') => InterpolationStart,
+            (StringStart(1), '\n' | '\r') => return make_error(MissingTerminator),
+            (StringStart(1), _) => String,
+            (StringStart(2), '"') => String,
+            (String, '"') => StringEnd(1),
+            (String, '\\') => EscapeStart,
+            (String, '$') if peek == Some('{') => InterpolationStart,
+            (String, '\n' | '\r') if !multiline => return make_error(MissingTerminator),
+            (String, _) => String,
+            (EscapeStart, 'u') => UnicodeEscapeStart,
+            (EscapeStart, '\r') if multiline && peek == Some('\n') => EscapeStart,
+            (EscapeStart, '\n' | '\r') if multiline => String,
+            (EscapeStart, _) => {
+                if c.is_string_escape() {
+                    String
+                } else {
+                    return make_error(InvalidEscape);
+                }
+            }
+            (UnicodeEscapeStart, '{') => UnicodeEscape(0),
+            (UnicodeEscapeStart, _) => return make_error(MissingUnicodeEscapeBrace),
+            (UnicodeEscape(count), '}') => {
+                if count == 0 {
+                    return make_error(MissingUnicodeEscape);
+                } else {
+                    String
+                }
+            }
+            (UnicodeEscape(count), _) => {
+                if c.is_hex_digit() {
+                    if count < 8 {
+                        UnicodeEscape(count + 1)
+                    } else {
+                        return make_error(OverlongUnicodeEscape);
+                    }
+                } else {
+                    return make_error(InvalidUnicodeEscapeDigit);
+                }
+            }
+            (InterpolationStart, '{') => Interpolation,
+            (Interpolation, _) => return make_error(Interpolation),
+            (StringEnd(1), _) if !multiline => return make_error(StringEnd(1)),
+            (StringEnd(1), '"') if peek == Some('"') => StringEnd(2),
+            (StringEnd(1), '\\') => EscapeStart,
+            (StringEnd(1), '$') if peek == Some('{') => InterpolationStart,
+            (StringEnd(1), _) => String,
+            (StringEnd(2), '"') => StringEnd(3),
+            (StringEnd(3), _) => return make_error(StringEnd(3)),
+            _ => unreachable!("Invalid state"),
+        };
+
+        Ok(StringFsmState::new(kind, multiline))
+    }
+
+    fn no_input_state(state: Self::State) -> Self::State {
+        use StringFsmStateKind::*;
+
+        if let StringEnd(count) = state.kind {
+            if count == 1 && !state.multiline || count == 3 && state.multiline {
+                return state;
+            }
+        }
+
+        StringFsmState::new(MissingTerminator, state.multiline)
+    }
+}

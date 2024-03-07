@@ -79,7 +79,7 @@ impl Runner {
                     println!(
                         "{:?} {:?} {} {}",
                         token.kind,
-                        token.source_range.get_text(),
+                        token.source_range.get_str(),
                         !token.leading_whitespace_range.is_empty(),
                         token.has_trailing_whitespace
                     );

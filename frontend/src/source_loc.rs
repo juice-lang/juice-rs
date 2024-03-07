@@ -64,7 +64,7 @@ impl<'a> SourceRange<'a> {
         SourceLoc::new(self.source, self.end)
     }
 
-    pub fn get_text(&self) -> &'a str {
+    pub fn get_str(&self) -> &'a str {
         &self.source.get_contents()[self.start..self.end]
     }
 

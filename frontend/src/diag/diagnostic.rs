@@ -10,6 +10,8 @@ diagnostic!(
         [error] InvalidDigit(digit_name: &'static str, c: into Colored<char>, literal_name: &'static str) =>
             "Invalid {} `{}` in {} literal",
         [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
+        [error] InvalidUnicodeScalar(hex: into Colored<&'a str>) => "Invalid Unicode scalar value `{}`",
+        [error] InsufficientIndentation => "Insufficient indentation in multiline string literal",
     }
 
     #[derive(Debug, Clone)]

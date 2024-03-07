@@ -6,6 +6,9 @@ diagnostic_note!(
     pub enum DiagnosticContextNote<'a> {
         InvalidCharacterLocation => "Invalid character is here",
         InvalidDigitLocation => "Invalid digit is here",
+        InvalidUnicodeScalarLocation => "Invalid scalar is here",
+        LineStartLocation => "Line starts here",
+        IndentationLocation => "Should match indentation here",
         CommentLocation => "Comment is here",
         CommentTerminatorLocation => "Comment terminator is here",
         LiteralLocation => "Literal is here",
