@@ -3,7 +3,7 @@ mod literal;
 mod token;
 mod token_kind;
 
-use std::{mem::MaybeUninit, num::NonZero};
+use std::num::NonZero;
 
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
@@ -30,8 +30,8 @@ impl<'a> Error<'a> {
         context_note: DiagnosticContextNote<'a>,
         at_end: bool,
     ) -> Self {
-        let source_loc = if at_end {
-            source_range.end_loc()
+        let source_loc = if at_end && !source_range.is_empty() {
+            source_range.source.get_loc(source_range.end - 1)
         } else {
             source_range.start_loc()
         };
@@ -88,6 +88,12 @@ impl<'a> Error<'a> {
 
 pub type LexerResult<'a> = Result<Token<'a>, Error<'a>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InterpolationInfo {
+    start: usize,
+    literal_start: usize,
+}
+
 #[derive(Debug)]
 pub struct Lexer<'a> {
     source: Source<'a>,
@@ -95,7 +101,7 @@ pub struct Lexer<'a> {
     start: usize,
     current: usize,
     leading_whitespace_start: usize,
-    is_nested: bool,
+    interpolation_info: Option<InterpolationInfo>,
     brace_depth: isize,
 }
 
@@ -109,45 +115,40 @@ impl<'a> Lexer<'a> {
             start: 0,
             current: 0,
             leading_whitespace_start: 0,
-            is_nested: false,
+            interpolation_info: None,
             brace_depth: 0,
         }
     }
 
-    pub fn with_nested<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let mut res = MaybeUninit::uninit();
-        take_mut::take(self, |mut lexer| {
-            let mut nested_lexer = Lexer {
-                source: lexer.source,
-                chars: lexer.chars,
-                start: lexer.current,
-                current: lexer.current,
-                leading_whitespace_start: lexer.current,
-                is_nested: true,
-                brace_depth: 0,
-            };
+    pub fn with_interpolation<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let start = self.start;
+        let leading_whitespace_start = self.leading_whitespace_start;
+        let interpolation_info = self.interpolation_info;
+        let brace_depth = self.brace_depth;
 
-            res.write(f(&mut nested_lexer));
-
-            let Lexer {
-                source, chars, current, ..
-            } = nested_lexer;
-
-            lexer.source = source;
-            lexer.chars = chars;
-            lexer.current = current;
-
-            lexer
+        self.start = self.current;
+        self.leading_whitespace_start = self.current;
+        self.interpolation_info = Some(InterpolationInfo {
+            start: self.current - 2,
+            literal_start: self.start,
         });
+        self.brace_depth = 0;
 
-        unsafe { res.assume_init() }
+        let res = f(self);
+
+        self.start = start;
+        self.leading_whitespace_start = leading_whitespace_start;
+        self.interpolation_info = interpolation_info;
+        self.brace_depth = brace_depth;
+
+        res
     }
 
     fn next_token(&mut self) -> Option<LexerResult<'a>> {
         self.start = self.current;
         self.leading_whitespace_start = self.current;
 
-        if self.is_nested && self.brace_depth == 0 && self.peek() == Some('}') {
+        if self.interpolation_info.is_some() && self.brace_depth == 0 && self.peek() == Some('}') {
             return None;
         }
 
@@ -180,7 +181,23 @@ impl<'a> Lexer<'a> {
 
     fn next_token_impl(&mut self, c: char) -> LexerResult<'a> {
         let token_kind = match c {
-            '\n' => Tok![Newline],
+            '\n' => {
+                if let Some(info) = self.interpolation_info {
+                    return Err(Error::new(
+                        self.source.get_range(info.start, self.current),
+                        Diagnostic::expected_interpolation_end(),
+                        DiagnosticContextNote::interpolation_location(),
+                        true,
+                    )
+                    .with_context_note(
+                        self.source.get_range(info.literal_start, self.current),
+                        DiagnosticContextNote::literal_location(),
+                    )
+                    .with_note(DiagnosticNote::newline_in_interpolation()));
+                } else {
+                    Tok![Newline]
+                }
+            }
             '`' => Tok![Backtick],
             '(' => Tok![LeftParen],
             ')' => Tok![RightParen],
@@ -368,16 +385,16 @@ impl<'a> Lexer<'a> {
         ))
     }
 
-    fn error(&mut self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
+    fn error(&self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
         Error::new(self.get_current_range(), diagnostic, context_note, false)
     }
 
-    fn error_at_end(&mut self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
+    fn error_at_end(&self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
         Error::new(self.get_current_range(), diagnostic, context_note, true)
     }
 
     fn error_at_next_character(
-        &mut self,
+        &self,
         diagnostic: Diagnostic<'a>,
         context_note: DiagnosticContextNote<'a>,
     ) -> Error<'a> {
@@ -394,6 +411,26 @@ impl<'a> Lexer<'a> {
 
     fn get_leading_whitespace_range(&self) -> SourceRange<'a> {
         self.source.get_range(self.leading_whitespace_start, self.start)
+    }
+
+    fn expect_char_eq(&mut self, expected: char, error: impl FnOnce(&Self) -> Error<'a>) -> Result<char, Error<'a>> {
+        self.expect_char(|c| c == expected, error)
+    }
+
+    fn expect_char(
+        &mut self,
+        func: impl FnOnce(char) -> bool,
+        error: impl FnOnce(&Self) -> Error<'a>,
+    ) -> Result<char, Error<'a>> {
+        if let Some(c) = self.advance() {
+            if func(c) {
+                Ok(c)
+            } else {
+                Err(error(self))
+            }
+        } else {
+            Err(error(self))
+        }
     }
 
     fn match_str(&mut self, expected: &str) -> bool {

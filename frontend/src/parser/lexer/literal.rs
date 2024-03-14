@@ -140,57 +140,125 @@ impl<'a> LiteralKind<'a> {
             return Self::parse_raw_string(lexer);
         }
 
-        Ok(
-            match StringFsm::run(lexer, StringFsmState::new(StringStart(1), false)) {
-                StringFsmState {
-                    kind: StringEnd(1),
-                    multiline: false,
-                } => {
-                    let source_range = lexer.source.get_range(lexer.start + 1, lexer.current - 1);
-                    let string = Self::parse_string_part(source_range)?;
+        let state = StringFsm::run(lexer, StringFsmState::new(StringStart(1), false));
+
+        Ok(match (state.kind, state.multiline) {
+            (StringEnd(1), false) => {
+                let source_range = lexer.source.get_range(lexer.start + 1, lexer.current - 1);
+                let string = Self::parse_string_part(source_range)?;
+                Self::String(string)
+            }
+            (StringEnd(3), true) => {
+                let source_range = lexer.source.get_range(lexer.start + 3, lexer.current - 3);
+
+                let string = source_range.get_str();
+                if string.is_empty() {
+                    Self::String(Arc::from(""))
+                } else {
+                    let indentation = Self::get_multiline_indentation(source_range);
+                    let string = Self::parse_multiline_string_part(lexer, source_range, indentation, true, true)?;
                     Self::String(string)
                 }
-                StringFsmState {
-                    kind: StringEnd(3),
-                    multiline: true,
-                } => {
-                    let source_range = lexer.source.get_range(lexer.start + 3, lexer.current - 3);
-
-                    let string = source_range.get_str();
-                    if string.is_empty() {
-                        Self::String(Arc::from(""))
-                    } else {
-                        let indentation = string
-                            .rfind(|c| !matches!(c, ' ' | '\t'))
-                            .and_then(|indentation_start| {
-                                let string = &string[indentation_start..];
-
-                                if string.starts_with(|c| matches!(c, '\n' | '\r')) {
-                                    Some(SourceRange::new(
-                                        source_range.source,
-                                        source_range.start + indentation_start + 1,
-                                        source_range.end,
-                                    ))
-                                } else {
-                                    None
-                                }
-                            });
-
-                        let string = Self::parse_multiline_string_part(source_range, indentation, true, true)?;
-                        Self::String(string)
-                    }
-                }
-                _ => todo!(),
-            },
-        )
+            }
+            (Interpolation, multiline) => {
+                let first_part_range = lexer
+                    .source
+                    .get_range(lexer.start + if multiline { 3 } else { 1 }, lexer.current - 2);
+                Self::parse_string_interpolation(lexer, first_part_range, multiline)?
+            }
+            _ => todo!(),
+        })
     }
 
     fn parse_string_interpolation(
         lexer: &mut Lexer<'a>,
-        first_part: SourceRange<'a>,
+        first_part_range: SourceRange<'a>,
         multiline: bool,
     ) -> Result<Self, Error<'a>> {
-        todo!()
+        use StringFsmStateKind::*;
+
+        enum Part<'a> {
+            String(SourceRange<'a>),
+            Interpolation(Vec<Token<'a>>),
+        }
+
+        let mut parts = vec![Part::String(first_part_range)];
+
+        loop {
+            let interpolation_start = lexer.current - 2;
+
+            let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect::<Result<_, _>>())?;
+
+            lexer.expect_char_eq('}', |l| {
+                Error::new(
+                    l.source.get_range(interpolation_start, l.current),
+                    Diagnostic::expected_interpolation_end(),
+                    DiagnosticContextNote::interpolation_location(),
+                    true,
+                )
+                .with_context_note(l.get_current_range(), DiagnosticContextNote::literal_location())
+            })?;
+
+            parts.push(Part::Interpolation(tokens));
+
+            let start = lexer.current;
+
+            let state = StringFsm::run(lexer, StringFsmState::new(String, multiline));
+
+            match (state.kind, state.multiline) {
+                (StringEnd(1), false) => {
+                    let source_range = lexer.source.get_range(start, lexer.current - 1);
+                    parts.push(Part::String(source_range));
+                    break;
+                }
+                (StringEnd(3), true) => {
+                    let source_range = lexer.source.get_range(start, lexer.current - 3);
+                    parts.push(Part::String(source_range));
+                    break;
+                }
+                (Interpolation, _) => {
+                    let source_range = lexer.source.get_range(start, lexer.current - 2);
+                    parts.push(Part::String(source_range));
+                }
+                _ => todo!(),
+            }
+        }
+
+        if multiline {
+            let last_part = parts.last().expect("Parts should not be empty");
+            if let Part::String(source_range) = last_part {
+                let indentation = Self::get_multiline_indentation(*source_range);
+
+                let part_count = parts.len();
+
+                parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, part)| match part {
+                        Part::String(source_range) => Self::parse_multiline_string_part(
+                            lexer,
+                            source_range,
+                            indentation,
+                            i == 0,
+                            i == part_count - 1,
+                        )
+                        .map(InterpolationPart::String),
+                        Part::Interpolation(tokens) => Ok(InterpolationPart::Interpolation(tokens)),
+                    })
+                    .collect::<Result<_, _>>()
+            } else {
+                unreachable!("Last part should be a string")
+            }
+        } else {
+            parts
+                .into_iter()
+                .map(|part| match part {
+                    Part::String(source_range) => Self::parse_string_part(source_range).map(InterpolationPart::String),
+                    Part::Interpolation(tokens) => Ok(InterpolationPart::Interpolation(tokens)),
+                })
+                .collect::<Result<_, _>>()
+        }
+        .map(Self::StringInterpolation)
     }
 
     fn parse_string_part(source_range: SourceRange<'a>) -> Result<Arc<str>, Error<'a>> {
@@ -210,6 +278,7 @@ impl<'a> LiteralKind<'a> {
     }
 
     fn parse_multiline_string_part(
+        lexer: &Lexer<'a>,
         source_range: SourceRange<'a>,
         indentation: Option<SourceRange<'a>>,
         is_first: bool,
@@ -254,7 +323,9 @@ impl<'a> LiteralKind<'a> {
                             DiagnosticContextNote::line_start_location(),
                             false,
                         )
-                        .with_context_note(indentation, DiagnosticContextNote::indentation_location()));
+                        .with_context_note(indentation, DiagnosticContextNote::indentation_location())
+                        .with_context_note(lexer.get_current_range(), DiagnosticContextNote::literal_location())
+                        .with_note(DiagnosticNote::insufficient_indentation()));
                     }
                 }
             }
@@ -275,6 +346,25 @@ impl<'a> LiteralKind<'a> {
         }
 
         Ok(Arc::from(parsed))
+    }
+
+    fn get_multiline_indentation(source_range: SourceRange<'a>) -> Option<SourceRange<'a>> {
+        let string = source_range.get_str();
+        string
+            .rfind(|c| !matches!(c, ' ' | '\t'))
+            .and_then(|indentation_start| {
+                let string = &string[indentation_start..];
+
+                if string.starts_with(|c| matches!(c, '\n' | '\r')) {
+                    Some(SourceRange::new(
+                        source_range.source,
+                        source_range.start + indentation_start + 1,
+                        source_range.end,
+                    ))
+                } else {
+                    None
+                }
+            })
     }
 
     fn parse_raw_string(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {

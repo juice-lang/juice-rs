@@ -1,7 +1,9 @@
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
 use super::TokenKind;
 use crate::source_loc::SourceRange;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Token<'a> {
     pub kind: TokenKind<'a>,
     pub source_range: SourceRange<'a>,
@@ -22,5 +24,16 @@ impl<'a> Token<'a> {
             leading_whitespace_range,
             has_trailing_whitespace,
         }
+    }
+}
+
+impl<'a> Debug for Token<'a> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct("Token")
+            .field("kind", &self.kind)
+            .field("text", &self.source_range.get_str())
+            .field("has_leading_whitespace", &!self.leading_whitespace_range.is_empty())
+            .field("has_trailing_whitespace", &self.has_trailing_whitespace)
+            .finish()
     }
 }

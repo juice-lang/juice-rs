@@ -12,6 +12,7 @@ diagnostic!(
         [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
         [error] InvalidUnicodeScalar(hex: into Colored<&'a str>) => "Invalid Unicode scalar value `{}`",
         [error] InsufficientIndentation => "Insufficient indentation in multiline string literal",
+        [error] ExpectedInterpolationEnd(c: into Colored<char> = '}') => "Expected `{}` to end interpolation in string literal",
     }
 
     #[derive(Debug, Clone)]

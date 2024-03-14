@@ -9,9 +9,10 @@ diagnostic_note!(
         InvalidUnicodeScalarLocation => "Invalid scalar is here",
         LineStartLocation => "Line starts here",
         IndentationLocation => "Should match indentation here",
+        InterpolationLocation => "Interpolation is here",
         CommentLocation => "Comment is here",
         CommentTerminatorLocation => "Comment terminator is here",
-        LiteralLocation => "Literal is here",
+        LiteralLocation => "In this literal",
     }
 );
 
@@ -24,5 +25,8 @@ diagnostic_note!(
             "This should be {} {} ({})",
         CommentTerminatorInOperator(symbols: into Colored<&str> = "*/") =>
             "The string `{}` is always interpreted as a block comment terminator, even if it is part of an operator",
+        NewlineInInterpolation => "String interpolations cannot contain newlines",
+        InsufficientIndentation =>
+            "The indentation of the last line gets stripped from all other lines in multiline string literals"
     }
 );
