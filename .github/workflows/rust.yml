@@ -1,0 +1,116 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test ${{ matrix.crate }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    needs: [gather_crates, get_toolchain]
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.gather_crates.outputs.crates) }}
+        os: [ubuntu-latest, macos-latest]
+    env:
+      CRATE: ${{ matrix.crate }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
+      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - uses: Swatinem/rust-cache@v2.7.3
+        with:
+          shared-key: ${{ needs.get_toolchain.outputs.toolchain }}-cache
+          save-if: false
+      - name: Run complete check
+        run: cargo check --package "$CRATE" --all-features
+      - name: Run complete build
+        run: cargo build --package "$CRATE" --all-features
+      - name: Run all tests
+        run: cargo test --package "$CRATE" --all-features
+      - name: Check if we compile without any features activated
+        run: cargo build --package "$CRATE" --no-default-features
+      - name: Extract version from crate manifest
+        id: extract_version_crate
+        run: |
+          CRATE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -e -r '.packages[] | select(.name == "'"$CRATE"'") | .version')
+          echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
+      - name: Extract version from workspace manifest
+        uses: SebRollen/toml-action@v1.2.0
+        id: extract_version_workspace
+        with:
+          file: Cargo.toml
+          field: workspace.dependencies.${{ matrix.crate }}.version
+      - name: Compare versions
+        env:
+          CRATE_VERSION: ${{ steps.extract_version_crate.outputs.version }}
+          WORKSPACE_VERSION: ${{ steps.extract_version_workspace.outputs.value }}
+        run: |
+          test "$CRATE_VERSION" = "$WORKSPACE_VERSION" || test "=$CRATE_VERSION" = "$WORKSPACE_VERSION"
+  clippy:
+    name: Run clippy
+    runs-on: ubuntu-latest
+    needs: get_toolchain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
+          components: clippy
+      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - uses: Swatinem/rust-cache@v2.7.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Check with clippy
+        run: cargo clippy --all --all-features
+  rustfmt:
+    name: Run rustfmt
+    runs-on: ubuntu-latest
+    needs: get_toolchain
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
+          components: rustfmt
+      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - name: Check formatting
+        run: cargo fmt -- --check
+  ensure-lockfile-uptodate:
+    name: Ensure that `Cargo.lock` is up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2.7.3
+      - name: Check Cargo.lock using cargo metadata
+        run: cargo metadata --locked --format-version=1 > /dev/null
+  gather_crates:
+    name: Gather crates
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.get_crates.outputs.crates }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: get_crates
+        run: |
+          WORKSPACE_MEMBERS=$(cargo metadata --format-version=1 --no-deps | jq -c '.packages | map(.name)')
+          echo "crates=${WORKSPACE_MEMBERS}" >> $GITHUB_OUTPUT
+  get_toolchain:
+    name: Get toolchain
+    runs-on: ubuntu-latest
+    outputs:
+      toolchain: ${{ steps.read_toml.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: SebRollen/toml-action@v1.2.0
+        id: read_toml
+        with:
+          file: rust-toolchain.toml
+          field: toolchain.channel
