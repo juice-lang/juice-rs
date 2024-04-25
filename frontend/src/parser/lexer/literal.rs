@@ -1,15 +1,12 @@
-use std::{iter::Peekable, sync::Arc};
+use std::sync::Arc;
 
+use juice_core::{CharExt, OptionExt};
 use num_bigint::BigUint;
 
-use super::{
-    fsm::{Fsm as _, NumberFsm, NumberFsmState, StringFsm, StringFsmState, StringFsmStateKind},
-    Error, Lexer, Token,
-};
+use super::{Lexer, Token};
 use crate::{
     diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
-    source_loc::SourceRange,
-    Result,
+    source_loc::{SourceLoc, SourceRange},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +26,42 @@ impl Radix {
             Self::Hexadecimal => 16,
         }
     }
+
+    pub fn from_prefix(prefix: char) -> Option<Self> {
+        match prefix {
+            'b' => Some(Self::Binary),
+            'o' => Some(Self::Octal),
+            'x' => Some(Self::Hexadecimal),
+            _ => None,
+        }
+    }
+
+    pub fn matches_digit(self, c: char) -> bool {
+        (match self {
+            Self::Binary => CharExt::is_binary_digit,
+            Self::Octal => CharExt::is_octal_digit,
+            Self::Decimal => CharExt::is_decimal_digit,
+            Self::Hexadecimal => CharExt::is_hex_digit,
+        })(c)
+    }
+
+    pub fn digit_name(self) -> &'static str {
+        match self {
+            Self::Binary => "binary digit",
+            Self::Octal => "octal digit",
+            Self::Decimal => "digit",
+            Self::Hexadecimal => "hexadecimal digit",
+        }
+    }
+
+    pub fn digit_hint(self) -> Option<&'static str> {
+        match self {
+            Self::Binary => Some("0 or 1"),
+            Self::Octal => Some("0-7"),
+            Self::Hexadecimal => Some("0-9, a-f, or A-F"),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -39,70 +72,133 @@ pub enum InterpolationPart<'a> {
 
 #[derive(Debug, Clone)]
 pub enum LiteralKind<'a> {
-    Int(Vec<u64>, Radix),
+    Int(u64, Radix),
+    BigInt(Vec<u64>, Radix),
     Float(f64),
     Char(char),
     String(Arc<str>),
     StringInterpolation(Vec<InterpolationPart<'a>>),
+    InvalidInt,
+    InvalidFloat,
+    InvalidChar,
+    InvalidString,
 }
 
 #[allow(clippy::result_large_err)]
 impl<'a> LiteralKind<'a> {
-    pub fn parse_number(lexer: &mut Lexer<'a>, start: char) -> Result<Self, Error<'a>> {
-        use NumberFsmState::*;
+    pub fn lex_number(lexer: &mut Lexer<'a>, start: char) -> Self {
+        let (radix, mut is_first) = (start == '0')
+            .then(|| lexer.match_char_map(Radix::from_prefix))
+            .flatten()
+            .map_or((Radix::Decimal, false), |r| (r, true));
 
-        let start_state = if start == '0' { ZeroStart } else { Integer };
-
-        Ok(match NumberFsm::run(lexer, start_state) {
-            BinaryInteger => Self::parse_int(lexer, Radix::Binary),
-            OctalInteger => Self::parse_int(lexer, Radix::Octal),
-            HexInteger => Self::parse_int(lexer, Radix::Hexadecimal),
-            Integer => Self::parse_int(lexer, Radix::Decimal),
-            Float | Exponent => Self::parse_float(lexer),
-            error_state => {
-                let literal_name = match error_state {
-                    InvalidDigit | InvalidBinaryDigit | MissingBinaryDigit | InvalidOctalDigit | MissingOctalDigit
-                    | InvalidHexDigit | MissingHexDigit => "integer",
-                    InvalidFloatDigit | InvalidExponentDigit | MissingExponentDigit => "floating-point",
-                    _ => unreachable!("Invalid end state"),
-                };
-
-                let (article, digit_name, digit_hint) = match error_state {
-                    InvalidDigit | InvalidFloatDigit | InvalidExponentDigit | MissingExponentDigit => {
-                        ("a", "digit", None)
-                    }
-                    InvalidBinaryDigit | MissingBinaryDigit => ("a", "binary digit", Some("0 or 1")),
-                    InvalidOctalDigit | MissingOctalDigit => ("an", "octal digit", Some("0-7")),
-                    InvalidHexDigit | MissingHexDigit => ("a", "hexadecimal digit", Some("0-9, a-f, or A-F")),
-                    _ => unreachable!("Invalid end state"),
-                };
-
-                let mut error = match error_state {
-                    InvalidDigit | InvalidBinaryDigit | InvalidOctalDigit | InvalidHexDigit | InvalidFloatDigit
-                    | InvalidExponentDigit => lexer.error_at_next_character(
-                        Diagnostic::invalid_digit(digit_name, lexer.peek().unwrap(), literal_name),
-                        DiagnosticContextNote::invalid_digit_location(),
-                    ),
-                    MissingBinaryDigit | MissingOctalDigit | MissingHexDigit | MissingExponentDigit => lexer
+        loop {
+            let Some(c) = lexer.peek() else {
+                return if is_first {
+                    lexer
                         .error_at_end(
-                            Diagnostic::missing_digit(digit_name, literal_name),
+                            Diagnostic::missing_digit(radix.digit_name(), "integer"),
                             DiagnosticContextNote::literal_location(),
-                        ),
-                    _ => unreachable!("Invalid end state"),
-                };
+                        )
+                        .record();
 
-                if let Some(hint) = digit_hint {
-                    error = error.with_note(DiagnosticNote::expected_digit(article, digit_name, hint));
+                    Self::InvalidInt
+                } else {
+                    Self::parse_int(lexer.get_current_range().get_str(), radix)
+                };
+            };
+
+            if !is_first && c == '_' {
+                lexer.advance();
+                continue;
+            }
+
+            if radix == Radix::Decimal
+                && (matches!(c, 'e' | 'E') || (c == '.' && lexer.peek2().is_some_and(CharExt::is_decimal_digit)))
+            {
+                break;
+            }
+
+            if !radix.matches_digit(c) {
+                if c.is_number_end() && !is_first {
+                    return Self::parse_int(lexer.get_current_range().get_str(), radix);
                 }
 
-                return Err(error);
+                let range = lexer.get_next_character_range(c);
+
+                let mut error = lexer
+                    .error_at_token(
+                        lexer.get_current_loc(),
+                        Diagnostic::invalid_digit(radix.digit_name(), lexer.peek().unwrap(), "integer"),
+                        DiagnosticContextNote::literal_location(),
+                    )
+                    .with_context_note(range, DiagnosticContextNote::invalid_digit_location());
+
+                if let Some(hint) = radix.digit_hint() {
+                    error = error.with_note(DiagnosticNote::expected_digit(radix.digit_name(), hint));
+                }
+
+                error.record();
+
+                while lexer.match_char(|c| !c.is_number_end()) {}
+
+                return Self::InvalidInt;
             }
-        })
+
+            is_first = false;
+            lexer.advance();
+        }
+
+        assert_eq!(radix, Radix::Decimal);
+
+        if lexer.match_char_eq('.') {
+            lexer.expect_char(CharExt::is_decimal_digit, |_| {
+                unreachable!("There should be a digit after the dot")
+            });
+
+            while lexer.match_char(|c| CharExt::is_decimal_digit(c) || c == '_') {}
+        }
+
+        if lexer.match_char(|c| matches!(c, 'e' | 'E')) {
+            lexer.advance_if(|c| matches!(c, '+' | '-'));
+
+            if !lexer.match_char(CharExt::is_decimal_digit) {
+                lexer
+                    .error_at_end(
+                        Diagnostic::missing_digit("digit", "floating-point"),
+                        DiagnosticContextNote::literal_location(),
+                    )
+                    .record();
+
+                return Self::InvalidFloat;
+            }
+
+            while lexer.match_char(|c| CharExt::is_decimal_digit(c) || c == '_') {}
+        }
+
+        let c = lexer.peek();
+
+        if c.is_none_or(CharExt::is_number_end) {
+            return Self::parse_float(lexer.get_current_range().get_str());
+        }
+
+        let range = lexer.get_next_character_range(c.unwrap());
+
+        lexer
+            .error_at_token(
+                lexer.get_current_loc(),
+                Diagnostic::invalid_digit("digit", lexer.peek().unwrap(), "floating-point"),
+                DiagnosticContextNote::literal_location(),
+            )
+            .with_context_note(range, DiagnosticContextNote::invalid_digit_location())
+            .record();
+
+        while lexer.match_char(|c| !c.is_number_end()) {}
+
+        Self::InvalidFloat
     }
 
-    fn parse_int(lexer: &Lexer, radix: Radix) -> Self {
-        let mut string = lexer.get_current_range().get_str();
-
+    fn parse_int(mut string: &str, radix: Radix) -> Self {
         if radix != Radix::Decimal {
             string = &string[2..];
         }
@@ -121,302 +217,432 @@ impl<'a> LiteralKind<'a> {
         let bigint = BigUint::from_radix_be(&radix_digits, radix.radix_value()).expect("Digits should be valid here");
         let words = bigint.to_u64_digits();
 
-        Self::Int(words, radix)
-    }
-
-    fn parse_float(lexer: &Lexer) -> Self {
-        let string = lexer.get_current_range().get_str();
-        todo!()
-    }
-
-    pub fn parse_char(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {
-        todo!()
-    }
-
-    pub fn parse_string(lexer: &mut Lexer<'a>, start: char) -> Result<Self, Error<'a>> {
-        use StringFsmStateKind::*;
-
-        if start == '#' {
-            return Self::parse_raw_string(lexer);
+        if words.len() == 1 {
+            Self::Int(words[0], radix)
+        } else {
+            Self::BigInt(words, radix)
         }
-
-        let state = StringFsm::run(lexer, StringFsmState::new(StringStart(1), false));
-
-        Ok(match (state.kind, state.multiline) {
-            (StringEnd(1), false) => {
-                let source_range = lexer.source.get_range(lexer.start + 1, lexer.current - 1);
-                let string = Self::parse_string_part(source_range)?;
-                Self::String(string)
-            }
-            (StringEnd(3), true) => {
-                let source_range = lexer.source.get_range(lexer.start + 3, lexer.current - 3);
-
-                let string = source_range.get_str();
-                if string.is_empty() {
-                    Self::String(Arc::from(""))
-                } else {
-                    let indentation = Self::get_multiline_indentation(source_range);
-                    let string = Self::parse_multiline_string_part(lexer, source_range, indentation, true, true)?;
-                    Self::String(string)
-                }
-            }
-            (Interpolation, multiline) => {
-                let first_part_range = lexer
-                    .source
-                    .get_range(lexer.start + if multiline { 3 } else { 1 }, lexer.current - 2);
-                Self::parse_string_interpolation(lexer, first_part_range, multiline)?
-            }
-            _ => todo!(),
-        })
     }
 
-    fn parse_string_interpolation(
-        lexer: &mut Lexer<'a>,
-        first_part_range: SourceRange<'a>,
-        multiline: bool,
-    ) -> Result<Self, Error<'a>> {
-        use StringFsmStateKind::*;
+    fn parse_float(string: &str) -> Self {
+        let string = string.replace('_', "");
 
+        let float = string.parse().expect("Digits should be valid here");
+
+        Self::Float(float)
+    }
+
+    pub fn lex_char(lexer: &mut Lexer<'a>) -> Self {
+        todo!()
+    }
+
+    pub fn lex_string(lexer: &mut Lexer<'a>) -> Self {
         enum Part<'a> {
-            String(SourceRange<'a>),
+            String {
+                content: String,
+                newline_locations: Vec<(usize, SourceLoc<'a>)>,
+            },
             Interpolation(Vec<Token<'a>>),
         }
 
-        let mut parts = vec![Part::String(first_part_range)];
+        let is_multiline = lexer.match_str(r#""""#); // One quote is already consumed by the lexer
+
+        let terminator = if is_multiline { r#"""""# } else { r#"""# };
+
+        let mut parts = Vec::new();
+        let mut current_content = String::new();
+        let mut current_newline_locations = Vec::new();
 
         loop {
-            let interpolation_start = lexer.current - 2;
+            let Some(c) = lexer.advance() else {
+                lexer
+                    .error_at_end(
+                        Diagnostic::expected_string_literal_terminator(terminator),
+                        DiagnosticContextNote::unterminated_literal_location(),
+                    )
+                    .record();
 
-            let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect::<Result<_, _>>())?;
+                return Self::InvalidString;
+            };
 
-            lexer.expect_char_eq('}', |l| {
-                Error::new(
-                    l.source.get_range(interpolation_start, l.current),
-                    Diagnostic::expected_interpolation_end(),
-                    DiagnosticContextNote::interpolation_location(),
-                    true,
-                )
-                .with_context_note(l.get_current_range(), DiagnosticContextNote::literal_location())
-            })?;
-
-            parts.push(Part::Interpolation(tokens));
-
-            let start = lexer.current;
-
-            let state = StringFsm::run(lexer, StringFsmState::new(String, multiline));
-
-            match (state.kind, state.multiline) {
-                (StringEnd(1), false) => {
-                    let source_range = lexer.source.get_range(start, lexer.current - 1);
-                    parts.push(Part::String(source_range));
-                    break;
+            match c {
+                '"' => {
+                    if !is_multiline || lexer.match_str(r#""""#) {
+                        break;
+                    } else {
+                        current_content.push('"');
+                    }
                 }
-                (StringEnd(3), true) => {
-                    let source_range = lexer.source.get_range(start, lexer.current - 3);
-                    parts.push(Part::String(source_range));
-                    break;
+                '\r' | '\n' => {
+                    let start = lexer.current - 1;
+
+                    if c == '\r' {
+                        lexer.match_char_eq('\n');
+                    }
+
+                    if !is_multiline {
+                        lexer
+                            .error_at_token(
+                                lexer.source.get_loc(start),
+                                Diagnostic::newline_in_literal("string"),
+                                DiagnosticContextNote::literal_location(),
+                            )
+                            .with_note(DiagnosticNote::newline_in_literal())
+                            .record();
+                    }
+
+                    current_content.push('\n');
+                    current_newline_locations.push((current_content.len(), lexer.get_current_loc()));
                 }
-                (Interpolation, _) => {
-                    let source_range = lexer.source.get_range(start, lexer.current - 2);
-                    parts.push(Part::String(source_range));
+                '\\' => {
+                    let (escaped, was_newline) = Self::consume_escape_sequence(lexer, is_multiline, "string");
+                    if let Some(escaped) = escaped {
+                        current_content.push(escaped);
+                    }
+
+                    if was_newline {
+                        current_newline_locations.push((current_content.len(), lexer.get_current_loc()));
+                    }
                 }
-                _ => todo!(),
+                '$' => {
+                    if lexer.match_char_eq('{') {
+                        if !current_content.is_empty() {
+                            let content = std::mem::take(&mut current_content);
+                            let newline_locations = std::mem::take(&mut current_newline_locations);
+                            parts.push(Part::String {
+                                content,
+                                newline_locations,
+                            });
+                        }
+
+                        let interpolation_start = lexer.current;
+
+                        let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect());
+
+                        if lexer.match_char_eq('}') {
+                            parts.push(Part::Interpolation(tokens));
+                        } else {
+                            assert!(
+                                lexer.peek().is_none(),
+                                "The inner lexer should have stopped at the end of either the interpolation or the file"
+                            );
+
+                            let range = lexer.source.get_range(interpolation_start, lexer.current);
+
+                            lexer
+                                .error_at_token(
+                                    range.end_loc(),
+                                    Diagnostic::expected_interpolation_end(),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::interpolation_location())
+                                .record();
+                        }
+                    }
+                }
+                _ => {
+                    current_content.push(c);
+                }
             }
         }
 
-        if multiline {
-            let last_part = parts.last().expect("Parts should not be empty");
-            if let Part::String(source_range) = last_part {
-                let indentation = Self::get_multiline_indentation(*source_range);
+        if is_multiline {
+            let indentation = current_newline_locations.last().and_then(|(index, loc)| {
+                let last_line = &current_content[*index..];
+                if !last_line.is_empty() && last_line.chars().all(|c| matches!(c, ' ' | '\t')) {
+                    Some(loc.to_range(last_line.len()))
+                } else {
+                    None
+                }
+            });
 
+            parts.push(Part::String {
+                content: current_content,
+                newline_locations: current_newline_locations,
+            });
+
+            let parts: Vec<_> = if let Some(indentation) = indentation {
                 let part_count = parts.len();
 
                 parts
                     .into_iter()
                     .enumerate()
                     .map(|(i, part)| match part {
-                        Part::String(source_range) => Self::parse_multiline_string_part(
-                            lexer,
-                            source_range,
-                            indentation,
-                            i == 0,
-                            i == part_count - 1,
-                        )
-                        .map(InterpolationPart::String),
-                        Part::Interpolation(tokens) => Ok(InterpolationPart::Interpolation(tokens)),
+                        Part::String {
+                            content,
+                            newline_locations,
+                        } => {
+                            let content = Self::remove_multiline_indentation(
+                                lexer,
+                                content,
+                                newline_locations,
+                                indentation,
+                                i == 0,
+                                i == part_count - 1,
+                            );
+
+                            InterpolationPart::String(content)
+                        }
+                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
                     })
-                    .collect::<Result<_, _>>()
+                    .collect()
             } else {
-                unreachable!("Last part should be a string")
+                parts
+                    .into_iter()
+                    .map(|part| match part {
+                        Part::String { content, .. } => InterpolationPart::String(Arc::from(content)),
+                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
+                    })
+                    .collect()
+            };
+
+            if let [InterpolationPart::String(content)] = parts.as_slice() {
+                Self::String(content.clone())
+            } else {
+                Self::StringInterpolation(parts)
             }
         } else {
-            parts
-                .into_iter()
-                .map(|part| match part {
-                    Part::String(source_range) => Self::parse_string_part(source_range).map(InterpolationPart::String),
-                    Part::Interpolation(tokens) => Ok(InterpolationPart::Interpolation(tokens)),
-                })
-                .collect::<Result<_, _>>()
-        }
-        .map(Self::StringInterpolation)
-    }
+            let last_content = Arc::from(current_content);
 
-    fn parse_string_part(source_range: SourceRange<'a>) -> Result<Arc<str>, Error<'a>> {
-        let mut parsed = String::new();
-
-        let mut chars = source_range.get_str().chars().enumerate().peekable();
-        while let Some((_, c)) = chars.next() {
-            if c == '\\' {
-                let escape_sequence = Self::consume_escape_sequence(source_range, &mut chars)?;
-                parsed.push(escape_sequence);
+            if parts.is_empty() {
+                Self::String(last_content)
             } else {
-                parsed.push(c);
+                let parts = parts
+                    .into_iter()
+                    .map(|part| match part {
+                        Part::String { content, .. } => InterpolationPart::String(Arc::from(content)),
+                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
+                    })
+                    .chain(Some(InterpolationPart::String(last_content)))
+                    .collect();
+                Self::StringInterpolation(parts)
             }
         }
-
-        Ok(Arc::from(parsed))
     }
 
-    fn parse_multiline_string_part(
-        lexer: &Lexer<'a>,
-        source_range: SourceRange<'a>,
-        indentation: Option<SourceRange<'a>>,
+    fn remove_multiline_indentation(
+        lexer: &mut Lexer<'a>,
+        mut string: String,
+        newline_locations: Vec<(usize, SourceLoc<'a>)>,
+        indentation: SourceRange<'a>,
         is_first: bool,
         is_last: bool,
-    ) -> Result<Arc<str>, Error<'a>> {
-        let mut parsed = String::new();
-
-        let mut chars = source_range.get_str().chars().enumerate().peekable();
-        while let Some((_, c)) = chars.next() {
-            match c {
-                '\r' => {
-                    chars.next_if(|(_, c)| *c == '\n');
-
-                    parsed.push('\n');
-                }
-                '\n' => {
-                    parsed.push('\n');
-                }
-                '\\' => {
-                    if chars.next_if(|(_, c)| *c == '\r').is_some() {
-                        chars.next_if(|(_, c)| *c == '\n');
-                    } else if chars.next_if(|(_, c)| *c == '\n').is_none() {
-                        let escape_sequence = Self::consume_escape_sequence(source_range, &mut chars)?;
-                        parsed.push(escape_sequence);
-
-                        continue;
-                    }
-                }
-                _ => {
-                    parsed.push(c);
-                    continue;
-                }
-            }
-
-            if let Some(indentation) = indentation {
-                for indent in indentation.get_str().chars() {
-                    if chars.next_if(|(_, c)| *c == indent).is_none() {
-                        let i = chars.peek().expect("Indentation should be valid here").0;
-                        return Err(Error::new(
-                            SourceRange::new(source_range.source, source_range.start + i, source_range.start + i + 1),
-                            Diagnostic::insufficient_indentation(),
-                            DiagnosticContextNote::line_start_location(),
-                            false,
-                        )
-                        .with_context_note(indentation, DiagnosticContextNote::indentation_location())
-                        .with_context_note(lexer.get_current_range(), DiagnosticContextNote::literal_location())
-                        .with_note(DiagnosticNote::insufficient_indentation()));
-                    }
-                }
+    ) -> Arc<str> {
+        for (index, loc) in newline_locations.into_iter().rev() {
+            if let Some(((i, _), _)) = string[index..]
+                .char_indices()
+                .zip(indentation.get_str().char_indices())
+                .find(|((_, a), (_, b))| a != b)
+            {
+                lexer
+                    .error_at_token(
+                        loc + i,
+                        Diagnostic::insufficient_indentation(),
+                        DiagnosticContextNote::literal_location(),
+                    )
+                    .with_context_note(loc.to_range(1), DiagnosticContextNote::line_start_location())
+                    .with_context_note(indentation, DiagnosticContextNote::indentation_location())
+                    .with_note(DiagnosticNote::insufficient_indentation())
+                    .record();
+            } else {
+                string.replace_range(index..index + indentation.len(), "");
             }
         }
 
-        let mut parsed = parsed.as_str();
+        let mut string = string.as_str();
 
         if is_first {
-            if let Some(stripped) = parsed.strip_prefix('\n') {
-                parsed = stripped;
+            if let Some(stripped) = string.strip_prefix('\n') {
+                string = stripped;
             }
         }
 
         if is_last {
-            if let Some(stripped) = parsed.strip_suffix('\n') {
-                parsed = stripped;
+            if let Some(stripped) = string.strip_suffix('\n') {
+                string = stripped;
             }
         }
 
-        Ok(Arc::from(parsed))
+        Arc::from(string)
     }
 
-    fn get_multiline_indentation(source_range: SourceRange<'a>) -> Option<SourceRange<'a>> {
-        let string = source_range.get_str();
-        string
-            .rfind(|c| !matches!(c, ' ' | '\t'))
-            .and_then(|indentation_start| {
-                let string = &string[indentation_start..];
-
-                if string.starts_with(|c| matches!(c, '\n' | '\r')) {
-                    Some(SourceRange::new(
-                        source_range.source,
-                        source_range.start + indentation_start + 1,
-                        source_range.end,
-                    ))
-                } else {
-                    None
-                }
-            })
-    }
-
-    fn parse_raw_string(lexer: &mut Lexer<'a>) -> Result<Self, Error<'a>> {
+    pub fn lex_raw_string(lexer: &mut Lexer<'a>) -> Self {
         todo!()
     }
 
     fn consume_escape_sequence(
-        literal_range: SourceRange<'a>,
-        chars: &mut Peekable<impl Iterator<Item = (usize, char)>>,
-    ) -> Result<char, Error<'a>> {
-        Ok(match chars.next().expect("Escape sequence should be valid here").1 {
-            '0' => '\0',
-            '\\' => '\\',
-            't' => '\t',
-            'n' => '\n',
-            'r' => '\r',
-            '"' => '"',
-            '\'' => '\'',
-            '$' => '$',
-            'u' => {
-                let open = chars.next().expect("Escape sequence should be valid here");
-                assert_eq!(open.1, '{');
+        lexer: &mut Lexer<'a>,
+        is_multiline: bool,
+        literal_name: &'static str,
+    ) -> (Option<char>, bool) {
+        let escaped = 'b: {
+            if let Some(c) = lexer.advance() {
+                Some(match c {
+                    '\r' | '\n' => {
+                        let start = lexer.current - 1;
 
-                let mut code_point = 0;
-                for _ in 0..8 {
-                    let Some((_, c)) = chars.next_if(|(_, c)| *c != '}') else {
-                        break;
-                    };
+                        if c == '\r' {
+                            lexer.match_char_eq('\n');
+                        }
 
-                    let digit = c.to_digit(16).expect("Escape sequence should be valid here");
-                    code_point = (code_point << 4) | digit;
-                }
+                        if !is_multiline {
+                            lexer
+                                .error_at_token(
+                                    lexer.source.get_loc(start),
+                                    Diagnostic::newline_in_literal("string"),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_note(DiagnosticNote::newline_in_literal())
+                                .record();
+                        }
 
-                let close = chars.next().expect("Escape sequence should be valid here");
-                assert_eq!(close.1, '}');
+                        return (None, true);
+                    }
+                    '0' => '\0',
+                    '\\' => '\\',
+                    't' => '\t',
+                    'n' => '\n',
+                    'r' => '\r',
+                    '"' => '"',
+                    '\'' => '\'',
+                    '$' => '$',
+                    'u' => {
+                        if !lexer.match_char_eq('{') {
+                            let range = lexer.get_current_character_range(c);
 
-                char::from_u32(code_point).ok_or_else(|| {
-                    let code_point_range = SourceRange::new(
-                        literal_range.source,
-                        literal_range.start + open.0 + 1,
-                        literal_range.start + close.0,
-                    );
+                            lexer
+                                .error_at_token(
+                                    range.end_loc(),
+                                    Diagnostic::expected_unicode_escape_brace(literal_name),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
+                                .record();
 
-                    Error::new(
-                        code_point_range,
-                        Diagnostic::invalid_unicode_scalar(code_point_range.get_str()),
-                        DiagnosticContextNote::invalid_unicode_scalar_location(),
-                        false,
+                            break 'b None;
+                        }
+
+                        let mut code_point = 0;
+                        let mut i = 0;
+                        let mut invalid_code_point = false;
+                        loop {
+                            let Some(c) = lexer.advance_if(|c| c != '}') else {
+                                break;
+                            };
+
+                            let Some(digit) = c.to_digit(16) else {
+                                let range = lexer.get_current_character_range(c);
+
+                                lexer
+                                    .error_at_token(
+                                        range.start_loc(),
+                                        Diagnostic::invalid_unicode_escape_digit(c, literal_name),
+                                        DiagnosticContextNote::literal_location(),
+                                    )
+                                    .with_context_note(range, DiagnosticContextNote::invalid_digit_location())
+                                    .with_note(DiagnosticNote::expected_digit("hexadecimal digit", "0-9, a-f, or A-F"))
+                                    .record();
+
+                                invalid_code_point = true;
+
+                                continue;
+                            };
+
+                            code_point = (code_point << 4) | digit;
+                            i += 1;
+                        }
+
+                        if !lexer.match_char_eq('}') {
+                            let range = lexer.source.get_range(lexer.current - i - 2, lexer.current);
+
+                            lexer
+                                .error_at_token(
+                                    range.end_loc(),
+                                    Diagnostic::expected_unicode_escape_brace(literal_name),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
+                                .record();
+
+                            break 'b None;
+                        }
+
+                        if i == 0 {
+                            let range = lexer.source.get_range(lexer.current - 3, lexer.current);
+
+                            lexer
+                                .error_at_token(
+                                    lexer.source.get_loc(lexer.current - 1),
+                                    Diagnostic::missing_unicode_escape(literal_name),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
+                                .with_note(DiagnosticNote::unicode_escape_length())
+                                .record();
+
+                            break 'b None;
+                        } else if i > 8 {
+                            let range = lexer.source.get_range(lexer.current - i - 3, lexer.current);
+
+                            lexer
+                                .error_at_token(
+                                    lexer.source.get_loc(lexer.current - i - 1),
+                                    Diagnostic::overlong_unicode_escape(literal_name),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
+                                .with_note(DiagnosticNote::unicode_escape_length())
+                                .record();
+
+                            break 'b None;
+                        } else if invalid_code_point {
+                            break 'b None;
+                        }
+
+                        let Some(c) = char::from_u32(code_point) else {
+                            let range = lexer.source.get_range(lexer.current - i - 1, lexer.current - 1);
+
+                            lexer
+                                .error_at_token(
+                                    range.start_loc(),
+                                    Diagnostic::invalid_unicode_scalar(range.get_str()),
+                                    DiagnosticContextNote::literal_location(),
+                                )
+                                .with_context_note(range, DiagnosticContextNote::invalid_unicode_scalar_location())
+                                .record();
+
+                            break 'b None;
+                        };
+
+                        c
+                    }
+                    c => {
+                        let range = lexer.get_current_character_range(c);
+
+                        lexer
+                            .error_at_token(
+                                range.start_loc(),
+                                Diagnostic::invalid_escape_sequence(c, literal_name),
+                                DiagnosticContextNote::literal_location(),
+                            )
+                            .with_context_note(range, DiagnosticContextNote::escape_sequence_location())
+                            .record();
+
+                        break 'b None;
+                    }
+                })
+            } else {
+                lexer
+                    .error_at_end(
+                        Diagnostic::expected_escape_sequence(literal_name),
+                        DiagnosticContextNote::literal_location(),
                     )
-                })?
+                    .record();
+
+                None
             }
-            _ => unreachable!("Invalid escape sequence"),
-        })
+        };
+
+        (escaped, false)
     }
 }

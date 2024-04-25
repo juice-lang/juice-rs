@@ -1,4 +1,4 @@
-use juice_core::diag::Colored;
+use juice_core::diag::{Colored, PrefixedWithArticle};
 use juice_macros::diagnostic_note;
 
 diagnostic_note!(
@@ -9,10 +9,13 @@ diagnostic_note!(
         InvalidUnicodeScalarLocation => "Invalid scalar is here",
         LineStartLocation => "Line starts here",
         IndentationLocation => "Should match indentation here",
-        InterpolationLocation => "Interpolation is here",
+        InterpolationLocation => "In this interpolation",
         CommentLocation => "Comment is here",
         CommentTerminatorLocation => "Comment terminator is here",
         LiteralLocation => "In this literal",
+        UnterminatedLiteralLocation => "This literal is unterminated",
+        EscapeSequenceLocation => "Escape sequence is here",
+        UnicodeEscapeLocation => "Unicode escape is here",
     }
 );
 
@@ -21,11 +24,14 @@ diagnostic_note!(
     pub enum DiagnosticNote<'a> {
         MissingBlockCommentEnd(symbols: into Colored<&str> = "*/") =>
             "Missing trailing `{}` to terminate the block comment",
-        ExpectedDigit(article: &'static str, digit_name: &'static str, digit_hint: into Colored<&'static str>) =>
-            "This should be {} {} ({})",
+        ExpectedDigit(digit_name: into PrefixedWithArticle<&'static str>, digit_hint: into Colored<&'static str>) =>
+            "This should be {} ({})",
         CommentTerminatorInOperator(symbols: into Colored<&str> = "*/") =>
             "The string `{}` is always interpreted as a block comment terminator, even if it is part of an operator",
-        NewlineInInterpolation => "String interpolations cannot contain newlines",
+        UnicodeEscapeLength => "Unicode escape sequences must be between 1 and 8 hexadecimal digits long",
+        NewlineInLiteral(delimiter: into Colored<&'static str> = r#"""""#) =>
+            "Only multiline string literals (delimited by `{}`) can contain newlines",
+        NewlineInInterpolation => "Consider introducing a variable for complex interpolated expressions",
         InsufficientIndentation =>
             "The indentation of the last line gets stripped from all other lines in multiline string literals"
     }

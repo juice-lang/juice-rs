@@ -1,4 +1,3 @@
-mod fsm;
 mod literal;
 mod token;
 mod token_kind;
@@ -16,58 +15,15 @@ use crate::{
     Result, Tok,
 };
 
+#[derive(Debug, Clone)]
 pub struct Error<'a> {
-    pub source_loc: SourceLoc<'a>,
-    pub diagnostic: Diagnostic<'a>,
-    pub context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
-    pub note: Option<DiagnosticNote<'a>>,
+    source_loc: SourceLoc<'a>,
+    diagnostic: Diagnostic<'a>,
+    context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
+    note: Option<DiagnosticNote<'a>>,
 }
 
 impl<'a> Error<'a> {
-    pub fn new(
-        source_range: SourceRange<'a>,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-        at_end: bool,
-    ) -> Self {
-        let source_loc = if at_end && !source_range.is_empty() {
-            source_range.source.get_loc(source_range.end - 1)
-        } else {
-            source_range.start_loc()
-        };
-
-        Self {
-            source_loc,
-            diagnostic,
-            context_notes: vec![(source_range, context_note)],
-            note: None,
-        }
-    }
-
-    pub fn with_context_note<'b>(
-        self,
-        source_range: SourceRange<'b>,
-        context_note: DiagnosticContextNote<'b>,
-    ) -> Error<'b>
-    where
-        'a: 'b,
-    {
-        let mut context_notes = self.context_notes;
-        context_notes.push((source_range, context_note));
-
-        Error { context_notes, ..self }
-    }
-
-    pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> Error<'b>
-    where
-        'a: 'b,
-    {
-        Error {
-            note: Some(note),
-            ..self
-        }
-    }
-
     pub fn diagnose<'b, C: DiagnosticConsumer>(self, diagnostics: &DiagnosticEngine<'b, C>) -> Result<()>
     where
         'a: 'b,
@@ -86,7 +42,116 @@ impl<'a> Error<'a> {
     }
 }
 
-pub type LexerResult<'a> = Result<Token<'a>, Error<'a>>;
+#[derive(Debug, Clone)]
+struct PendingError<'a> {
+    source_loc: SourceLoc<'a>,
+    diagnostic: Diagnostic<'a>,
+    initial_context_note: DiagnosticContextNote<'a>,
+    context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
+    note: Option<DiagnosticNote<'a>>,
+}
+
+#[must_use = "Errors must be recorded to be diagnosed"]
+struct ErrorBuilder<'a, 'b>
+where
+    'a: 'b,
+{
+    source_loc: Result<(SourceRange<'a>, bool), SourceLoc<'a>>,
+    diagnostic: Diagnostic<'a>,
+    initial_context_note: DiagnosticContextNote<'a>,
+    context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
+    note: Option<DiagnosticNote<'a>>,
+    lexer: &'b mut Lexer<'a>,
+}
+
+impl<'a, 'b> ErrorBuilder<'a, 'b> {
+    fn new_with_range(
+        source_range: SourceRange<'a>,
+        at_end: bool,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+        lexer: &'b mut Lexer<'a>,
+    ) -> Self {
+        Self {
+            source_loc: Ok((source_range, at_end)),
+            diagnostic,
+            initial_context_note: context_note,
+            context_notes: Vec::new(),
+            note: None,
+            lexer,
+        }
+    }
+
+    fn new_with_loc(
+        source_loc: SourceLoc<'a>,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+        lexer: &'b mut Lexer<'a>,
+    ) -> Self {
+        Self {
+            source_loc: Err(source_loc),
+            diagnostic,
+            initial_context_note: context_note,
+            context_notes: Vec::new(),
+            note: None,
+            lexer,
+        }
+    }
+
+    fn with_context_note(mut self, source_range: SourceRange<'a>, context_note: DiagnosticContextNote<'a>) -> Self {
+        self.context_notes.push((source_range, context_note));
+        self
+    }
+
+    fn with_note(mut self, note: DiagnosticNote<'a>) -> Self {
+        self.note = Some(note);
+        self
+    }
+
+    fn record(self) {
+        let Self {
+            source_loc,
+            diagnostic,
+            initial_context_note,
+            context_notes,
+            note,
+            lexer,
+        } = self;
+
+        match source_loc {
+            Ok((source_range, at_end)) => {
+                let source_loc = if at_end {
+                    if let Some(c) = source_range.get_str().chars().last() {
+                        source_range.source.get_loc(source_range.end - c.len_utf8())
+                    } else {
+                        source_range.start_loc()
+                    }
+                } else {
+                    source_range.start_loc()
+                };
+
+                let mut context_notes = context_notes;
+                context_notes.push((source_range, initial_context_note));
+
+                let error = Error {
+                    source_loc,
+                    diagnostic,
+                    context_notes,
+                    note,
+                };
+
+                lexer.errors.push(error);
+            }
+            Err(source_loc) => lexer.pending_errors.push(PendingError {
+                source_loc,
+                diagnostic,
+                initial_context_note,
+                context_notes,
+                note,
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct InterpolationInfo {
@@ -101,8 +166,11 @@ pub struct Lexer<'a> {
     start: usize,
     current: usize,
     leading_whitespace_start: usize,
-    interpolation_info: Option<InterpolationInfo>,
+    last_considered_leading_whitespace: bool,
+    in_interpolation: bool,
     brace_depth: isize,
+    errors: Vec<Error<'a>>,
+    pending_errors: Vec<PendingError<'a>>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -115,40 +183,84 @@ impl<'a> Lexer<'a> {
             start: 0,
             current: 0,
             leading_whitespace_start: 0,
-            interpolation_info: None,
+            last_considered_leading_whitespace: true,
+            in_interpolation: false,
             brace_depth: 0,
+            errors: Vec::new(),
+            pending_errors: Vec::new(),
         }
     }
 
     pub fn with_interpolation<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let start = self.start;
-        let leading_whitespace_start = self.leading_whitespace_start;
-        let interpolation_info = self.interpolation_info;
-        let brace_depth = self.brace_depth;
+        let interpolation_start = self.current;
+
+        let outer_start = self.start;
+        let outer_leading_whitespace_start = self.leading_whitespace_start;
+        let outer_last_considered_leading_whitespace = self.last_considered_leading_whitespace;
+        let outer_in_interpolation = self.in_interpolation;
+        let outer_brace_depth = self.brace_depth;
+        let outer_errors = std::mem::take(&mut self.errors);
+        let mut outer_pending_errors = std::mem::take(&mut self.pending_errors);
 
         self.start = self.current;
         self.leading_whitespace_start = self.current;
-        self.interpolation_info = Some(InterpolationInfo {
-            start: self.current - 2,
-            literal_start: self.start,
-        });
+        self.last_considered_leading_whitespace = true;
+        self.in_interpolation = true;
         self.brace_depth = 0;
 
         let res = f(self);
 
-        self.start = start;
-        self.leading_whitespace_start = leading_whitespace_start;
-        self.interpolation_info = interpolation_info;
-        self.brace_depth = brace_depth;
+        assert!(self.pending_errors.is_empty());
+
+        self.start = outer_start;
+        self.leading_whitespace_start = outer_leading_whitespace_start;
+        self.last_considered_leading_whitespace = outer_last_considered_leading_whitespace;
+        self.in_interpolation = outer_in_interpolation;
+        self.brace_depth = outer_brace_depth;
+
+        for error in std::mem::replace(&mut self.errors, outer_errors) {
+            let Error {
+                source_loc,
+                diagnostic,
+                mut context_notes,
+                note,
+            } = error;
+
+            context_notes.push((
+                self.source.get_range(interpolation_start, self.current),
+                DiagnosticContextNote::interpolation_location(),
+            ));
+
+            outer_pending_errors.push(PendingError {
+                source_loc,
+                diagnostic,
+                initial_context_note: DiagnosticContextNote::literal_location(),
+                context_notes,
+                note,
+            });
+        }
+
+        self.pending_errors = outer_pending_errors;
 
         res
     }
 
-    fn next_token(&mut self) -> Option<LexerResult<'a>> {
+    pub fn diagnose_errors<'b, C: DiagnosticConsumer>(&mut self, diagnostics: &DiagnosticEngine<'b, C>) -> Result<()>
+    where
+        'a: 'b,
+    {
+        for error in self.errors.drain(..) {
+            error.diagnose(diagnostics)?;
+        }
+
+        Ok(())
+    }
+
+    fn next_token(&mut self) -> Option<Token<'a>> {
         self.start = self.current;
         self.leading_whitespace_start = self.current;
 
-        if self.interpolation_info.is_some() && self.brace_depth == 0 && self.peek() == Some('}') {
+        if self.in_interpolation && self.brace_depth == 0 && self.peek() == Some('}') {
             return None;
         }
 
@@ -160,9 +272,7 @@ impl<'a> Lexer<'a> {
                     if self.match_char_eq('/') {
                         while self.match_char_neq('\n') {}
                     } else if self.match_char_eq('*') {
-                        if let Some(error) = self.skip_block_comment() {
-                            return Some(Err(error));
-                        }
+                        self.skip_block_comment()
                     } else {
                         break;
                     }
@@ -172,6 +282,10 @@ impl<'a> Lexer<'a> {
 
                 self.start = self.current;
 
+                if self.in_interpolation && self.brace_depth == 0 && self.peek() == Some('}') {
+                    return None;
+                }
+
                 c = self.advance()?;
             }
 
@@ -179,24 +293,19 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn next_token_impl(&mut self, c: char) -> LexerResult<'a> {
+    fn next_token_impl(&mut self, c: char) -> Token<'a> {
         let token_kind = match c {
             '\n' => {
-                if let Some(info) = self.interpolation_info {
-                    return Err(Error::new(
-                        self.source.get_range(info.start, self.current),
-                        Diagnostic::expected_interpolation_end(),
-                        DiagnosticContextNote::interpolation_location(),
-                        true,
-                    )
-                    .with_context_note(
-                        self.source.get_range(info.literal_start, self.current),
-                        DiagnosticContextNote::literal_location(),
-                    )
-                    .with_note(DiagnosticNote::newline_in_interpolation()));
-                } else {
-                    Tok![Newline]
+                if self.in_interpolation {
+                    self.errors.push(Error {
+                        source_loc: self.get_current_loc(),
+                        diagnostic: Diagnostic::newline_in_interpolation(),
+                        context_notes: Vec::new(),
+                        note: Some(DiagnosticNote::newline_in_interpolation()),
+                    });
                 }
+
+                Tok![Newline]
             }
             '`' => Tok![Backtick],
             '(' => Tok![LeftParen],
@@ -220,7 +329,7 @@ impl<'a> Lexer<'a> {
             '?' => Tok![?],
             '.' => {
                 if self.match_char(CharExt::is_dot_operator) {
-                    self.try_consume_operator(true)?
+                    self.consume_operator(true)
                 } else {
                     Tok![.]
                 }
@@ -228,12 +337,12 @@ impl<'a> Lexer<'a> {
             '=' => {
                 if self.match_char_eq('>') {
                     if self.peek().is_some_and(CharExt::is_operator) {
-                        self.try_consume_operator(false)?
+                        self.consume_operator(false)
                     } else {
                         Tok![=>]
                     }
                 } else if self.peek().is_some_and(CharExt::is_operator) {
-                    self.try_consume_operator(false)?
+                    self.consume_operator(false)
                 } else {
                     Tok![=]
                 }
@@ -241,50 +350,54 @@ impl<'a> Lexer<'a> {
             '-' => {
                 if self.match_char_eq('>') {
                     if self.peek().is_some_and(CharExt::is_operator) {
-                        self.try_consume_operator(false)?
+                        self.consume_operator(false)
                     } else {
                         Tok![->]
                     }
                 } else {
-                    self.try_consume_operator(false)?
+                    self.consume_operator(false)
                 }
             }
             '&' => {
                 if self.peek() == Some('w') && self.peek2().is_none_or(|c| !c.is_identifier_char()) {
                     Tok![&w]
                 } else if self.peek().is_some_and(CharExt::is_operator) {
-                    self.try_consume_operator(false)?
+                    self.consume_operator(false)
                 } else {
                     Tok![&]
                 }
             }
             '#' => {
                 if self.chars.peek_first_after_eq('#') == Some('"') {
-                    self.try_consume_string_literal(c)?
+                    self.consume_string_literal(c)
                 } else {
                     Tok![#]
                 }
             }
             '*' => {
                 if self.match_char_eq('/') {
-                    return Err(self.error(
+                    self.error(
                         Diagnostic::unexpected_comment_terminator(),
                         DiagnosticContextNote::comment_terminator_location(),
-                    ));
-                } else {
-                    self.try_consume_operator(false)?
+                    )
+                    .record()
                 }
+
+                self.consume_operator(false)
             }
-            '\'' => self.try_consume_char_literal()?,
-            '"' => self.try_consume_string_literal(c)?,
+            '\'' => self.consume_char_literal(),
+            '"' => self.consume_string_literal(c),
             _ if c.is_identifier_start() => self.consume_identifier(),
-            _ if c.is_operator() => self.try_consume_operator(false)?,
-            _ if c.is_ascii_digit() => self.try_consume_number_literal(c)?,
+            _ if c.is_operator() => self.consume_operator(false),
+            _ if c.is_ascii_digit() => self.consume_number_literal(c),
             _ => {
-                return Err(self.error(
+                self.error(
                     Diagnostic::invalid_character(c),
                     DiagnosticContextNote::invalid_character_location(),
-                ))
+                )
+                .record();
+
+                Tok![Unknown]
             }
         };
 
@@ -300,7 +413,7 @@ impl<'a> Lexer<'a> {
             .map_or(Tok![Ident], TokenKind::Keyword)
     }
 
-    fn try_consume_operator(&mut self, allow_dot: bool) -> Result<TokenKind<'a>, Error<'a>> {
+    fn consume_operator(&mut self, allow_dot: bool) -> TokenKind<'a> {
         let func = if allow_dot {
             char::is_dot_operator
         } else {
@@ -316,13 +429,14 @@ impl<'a> Lexer<'a> {
                 }
                 Some('*') => {
                     if self.peek2() == Some('/') {
-                        return Err(Error::new(
+                        self.error_with_range(
                             self.source.get_range(self.current, self.current + 2),
+                            false,
                             Diagnostic::unexpected_comment_terminator(),
                             DiagnosticContextNote::comment_terminator_location(),
-                            false,
                         )
-                        .with_note(DiagnosticNote::comment_terminator_in_operator()));
+                        .with_note(DiagnosticNote::comment_terminator_in_operator())
+                        .record()
                     }
                 }
                 _ => {}
@@ -333,34 +447,46 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Ok(Tok![Op])
+        Tok![Op]
     }
 
-    fn try_consume_number_literal(&mut self, start: char) -> Result<TokenKind<'a>, Error<'a>> {
-        LiteralKind::parse_number(self, start).map(TokenKind::Literal)
+    fn consume_number_literal(&mut self, start: char) -> TokenKind<'a> {
+        TokenKind::Literal(LiteralKind::lex_number(self, start))
     }
 
-    fn try_consume_char_literal(&mut self) -> Result<TokenKind<'a>, Error<'a>> {
-        LiteralKind::parse_char(self).map(TokenKind::Literal)
+    fn consume_char_literal(&mut self) -> TokenKind<'a> {
+        TokenKind::Literal(LiteralKind::lex_char(self))
     }
 
-    fn try_consume_string_literal(&mut self, start: char) -> Result<TokenKind<'a>, Error<'a>> {
-        LiteralKind::parse_string(self, start).map(TokenKind::Literal)
+    fn consume_string_literal(&mut self, start: char) -> TokenKind<'a> {
+        TokenKind::Literal(if start == '#' {
+            LiteralKind::lex_raw_string(self)
+        } else {
+            LiteralKind::lex_string(self)
+        })
     }
 
-    #[must_use]
-    fn skip_block_comment(&mut self) -> Option<Error<'a>> {
+    fn skip_block_comment(&mut self) {
         let mut depth = 1;
         while depth > 0 {
             let Some(c) = self.advance() else {
-                return Some(
-                    self.error(
+                return self
+                    .error(
                         Diagnostic::unterminated_comment(),
                         DiagnosticContextNote::comment_location(),
                     )
-                    .with_note(DiagnosticNote::missing_block_comment_end()),
-                );
+                    .with_note(DiagnosticNote::missing_block_comment_end())
+                    .record();
             };
+
+            if c == '\n' && self.in_interpolation {
+                self.errors.push(Error {
+                    source_loc: self.get_current_loc(),
+                    diagnostic: Diagnostic::newline_in_interpolation(),
+                    context_notes: Vec::new(),
+                    note: Some(DiagnosticNote::newline_in_interpolation()),
+                });
+            }
 
             if c == '/' && self.match_char_eq('*') {
                 depth += 1;
@@ -368,69 +494,119 @@ impl<'a> Lexer<'a> {
                 depth -= 1;
             }
         }
-
-        None
     }
 
-    fn make_token(&mut self, kind: TokenKind<'a>) -> LexerResult<'a> {
-        let has_trailing_whitespace = self.peek().is_some_and(|c| {
-            CharExt::is_whitespace_or_newline(c) || (c == '/' && matches!(self.peek2(), Some('/') | Some('*')))
-        });
+    fn make_token(&mut self, kind: TokenKind<'a>) -> Token<'a> {
+        let current_range = self.get_current_range();
 
-        Ok(Token::new(
+        for pending in self.pending_errors.drain(..) {
+            let mut context_notes = pending.context_notes;
+            context_notes.push((current_range, pending.initial_context_note));
+
+            let error = Error {
+                source_loc: pending.source_loc,
+                diagnostic: pending.diagnostic,
+                context_notes,
+                note: pending.note,
+            };
+
+            self.errors.push(error);
+        }
+
+        let has_leading_whitespace =
+            self.last_considered_leading_whitespace || !self.get_leading_whitespace_range().is_empty();
+
+        let has_trailing_whitespace = self
+            .peek()
+            .is_none_or(|c| c.is_trailing_whitespace() || (c == '/' && matches!(self.peek2(), Some('/') | Some('*'))));
+
+        if let Some(c) = current_range.get_str().chars().last() {
+            self.last_considered_leading_whitespace = c.is_leading_whitespace();
+        }
+
+        Token::new(
             kind,
-            self.get_current_range(),
+            current_range,
             self.get_leading_whitespace_range(),
+            has_leading_whitespace,
             has_trailing_whitespace,
-        ))
+        )
     }
 
-    fn error(&self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
-        Error::new(self.get_current_range(), diagnostic, context_note, false)
-    }
-
-    fn error_at_end(&self, diagnostic: Diagnostic<'a>, context_note: DiagnosticContextNote<'a>) -> Error<'a> {
-        Error::new(self.get_current_range(), diagnostic, context_note, true)
-    }
-
-    fn error_at_next_character(
-        &self,
+    fn error<'b>(
+        &'b mut self,
         diagnostic: Diagnostic<'a>,
         context_note: DiagnosticContextNote<'a>,
-    ) -> Error<'a> {
-        Error::new(self.get_next_character_range(), diagnostic, context_note, false)
+    ) -> ErrorBuilder<'a, 'b> {
+        self.error_with_range(self.get_current_range(), false, diagnostic, context_note)
+    }
+
+    fn error_at_end<'b>(
+        &'b mut self,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+    ) -> ErrorBuilder<'a, 'b> {
+        self.error_with_range(self.get_current_range(), true, diagnostic, context_note)
+    }
+
+    fn error_with_range<'b>(
+        &'b mut self,
+        source_range: SourceRange<'a>,
+        at_end: bool,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+    ) -> ErrorBuilder<'a, 'b> {
+        ErrorBuilder::new_with_range(source_range, at_end, diagnostic, context_note, self)
+    }
+
+    fn error_at_token<'b>(
+        &'b mut self,
+        source_loc: SourceLoc<'a>,
+        diagnostic: Diagnostic<'a>,
+        context_note: DiagnosticContextNote<'a>,
+    ) -> ErrorBuilder<'a, 'b> {
+        ErrorBuilder::new_with_loc(source_loc, diagnostic, context_note, self)
     }
 
     fn get_current_range(&self) -> SourceRange<'a> {
         self.source.get_range(self.start, self.current)
     }
 
-    fn get_next_character_range(&self) -> SourceRange<'a> {
-        self.source.get_range(self.current, self.current + 1)
+    fn get_current_character_range(&self, c: char) -> SourceRange<'a> {
+        self.source.get_range(self.current - c.len_utf8(), self.current)
+    }
+
+    fn get_next_character_range(&self, c: char) -> SourceRange<'a> {
+        self.source.get_range(self.current, self.current + c.len_utf8())
     }
 
     fn get_leading_whitespace_range(&self) -> SourceRange<'a> {
         self.source.get_range(self.leading_whitespace_start, self.start)
     }
 
-    fn expect_char_eq(&mut self, expected: char, error: impl FnOnce(&Self) -> Error<'a>) -> Result<char, Error<'a>> {
+    fn get_current_loc(&self) -> SourceLoc<'a> {
+        self.source.get_loc(self.current)
+    }
+
+    fn expect_char_eq(&mut self, expected: char, error: impl FnOnce(&mut Self)) -> Option<char> {
         self.expect_char(|c| c == expected, error)
     }
 
-    fn expect_char(
-        &mut self,
-        func: impl FnOnce(char) -> bool,
-        error: impl FnOnce(&Self) -> Error<'a>,
-    ) -> Result<char, Error<'a>> {
-        if let Some(c) = self.advance() {
-            if func(c) {
-                Ok(c)
-            } else {
-                Err(error(self))
-            }
+    fn expect_char(&mut self, func: impl FnOnce(char) -> bool, error: impl FnOnce(&mut Self)) -> Option<char> {
+        if let Some(c) = self.advance_if(func) {
+            Some(c)
         } else {
-            Err(error(self))
+            error(self);
+            None
         }
+    }
+
+    fn match_char_map<T>(&mut self, func: impl FnOnce(char) -> Option<T>) -> Option<T> {
+        let next = self.peek()?;
+
+        func(next).inspect(|_| {
+            self.advance();
+        })
     }
 
     fn match_str(&mut self, expected: &str) -> bool {
@@ -462,11 +638,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance_if(&mut self, func: impl FnOnce(char) -> bool) -> Option<char> {
-        self.chars.next_if(func).inspect(|_| self.current += 1)
+        self.chars.next_if(func).inspect(|c| self.current += c.len_utf8())
     }
 
     fn advance(&mut self) -> Option<char> {
-        self.chars.next().inspect(|_| self.current += 1)
+        self.chars.next().inspect(|c| self.current += c.len_utf8())
     }
 
     fn peek(&self) -> Option<char> {
@@ -479,9 +655,16 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = LexerResult<'a>;
+    type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()
+    }
+}
+
+impl<'a> Drop for Lexer<'a> {
+    fn drop(&mut self) {
+        assert!(self.errors.is_empty(), "Lexer dropped with errors");
+        assert!(self.pending_errors.is_empty());
     }
 }

@@ -40,6 +40,7 @@ pub enum TokenKind<'a> {
     Literal(LiteralKind<'a>),
     Identifier,
     Operator,
+    Unknown,
 }
 
 #[macro_export]
@@ -130,5 +131,8 @@ macro_rules! Tok {
     };
     (Op) => {
         $crate::parser::lexer::TokenKind::Operator
+    };
+    (Unknown) => {
+        $crate::parser::lexer::TokenKind::Unknown
     };
 }

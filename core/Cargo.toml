@@ -8,3 +8,4 @@ rust-version = { workspace = true }
 
 [dependencies]
 ariadne = { workspace = true }
+in_definite = "1.0.0"

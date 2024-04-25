@@ -4,13 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{
-    diag::{Diagnostic, DiagnosticContextNote, DiagnosticEngine},
-    parser::Lexer,
-    source_loc::SourceRange,
-    source_manager::SourceManager,
-    Result,
-};
+use crate::{diag::DiagnosticEngine, parser::Lexer, source_manager::SourceManager, Result};
 
 macro_rules! check_error {
     ($diagnostics:expr) => {
@@ -71,23 +65,21 @@ impl Runner {
 
         let diagnostics = DiagnosticEngine::new(&source_manager);
 
-        let lexer = Lexer::new(source_manager.get_main_source());
+        let mut lexer = Lexer::new(source_manager.get_main_source());
 
-        match lexer.collect::<Result<Vec<_>, _>>() {
-            Ok(tokens) => {
-                for token in tokens {
-                    println!(
-                        "{:?} {:?} {} {}",
-                        token.kind,
-                        token.source_range.get_str(),
-                        !token.leading_whitespace_range.is_empty(),
-                        token.has_trailing_whitespace
-                    );
-                }
-            }
-            Err(err) => {
-                err.diagnose(&diagnostics)?;
-            }
+        let tokens = (&mut lexer).collect::<Vec<_>>();
+
+        lexer.diagnose_errors(&diagnostics)?;
+        check_error!(diagnostics);
+
+        for token in tokens {
+            println!(
+                "{:?} {:?} {} {}",
+                token.kind,
+                token.source_range.get_str(),
+                token.has_leading_whitespace,
+                token.has_trailing_whitespace
+            );
         }
 
         check_error!(diagnostics);

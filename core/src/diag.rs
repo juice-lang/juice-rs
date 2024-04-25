@@ -65,6 +65,31 @@ impl<T: Display> From<T> for Colored<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrefixedWithArticle<T>(T);
+
+impl<T: Display> private::Sealed for PrefixedWithArticle<T> {}
+
+impl<T: Display> DiagnosticArg for PrefixedWithArticle<T> {
+    fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
+        let string = self.0.to_string();
+        let article = in_definite::get_a_or_an(&string);
+        format!("{} {}", article, string)
+    }
+}
+
+impl<T: Display> From<T> for PrefixedWithArticle<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: Display> From<T> for Colored<PrefixedWithArticle<T>> {
+    fn from(value: T) -> Self {
+        Self(PrefixedWithArticle(value))
+    }
+}
+
 diagnostic_arg!(
     u8,
     i8,

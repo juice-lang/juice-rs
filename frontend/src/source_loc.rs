@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     fmt::{Display, Formatter, Result as FmtResult},
+    ops::{Add, Sub},
 };
 
 use crate::source_manager::Source;
@@ -14,6 +15,10 @@ pub struct SourceLoc<'a> {
 impl<'a> SourceLoc<'a> {
     pub fn new(source: Source<'a>, offset: usize) -> Self {
         Self { source, offset }
+    }
+
+    pub fn to_range(self, len: usize) -> SourceRange<'a> {
+        SourceRange::new(self.source, self.offset, self.offset + len)
     }
 
     pub fn get_line_and_column(&self) -> Option<(usize, usize)> {
@@ -31,6 +36,22 @@ impl<'a> PartialOrd for SourceLoc<'a> {
         } else {
             None
         }
+    }
+}
+
+impl<'a> Add<usize> for SourceLoc<'a> {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self::new(self.source, self.offset + rhs)
+    }
+}
+
+impl<'a> Sub<usize> for SourceLoc<'a> {
+    type Output = Self;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        Self::new(self.source, self.offset - rhs)
     }
 }
 
@@ -70,6 +91,10 @@ impl<'a> SourceRange<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.start == self.end
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.start
     }
 }
 

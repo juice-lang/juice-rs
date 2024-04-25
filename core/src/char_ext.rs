@@ -2,6 +2,8 @@
 pub trait CharExt: Sized {
     fn is_whitespace_or_newline(self) -> bool;
     fn is_insignificant_whitespace(self) -> bool;
+    fn is_leading_whitespace(self) -> bool;
+    fn is_trailing_whitespace(self) -> bool;
     fn is_operator(self) -> bool;
     fn is_dot_operator(self) -> bool;
     fn is_identifier_start(self) -> bool;
@@ -40,6 +42,8 @@ impl_char_ext! {
     self;
     is_whitespace_or_newline => matches!(self, ' ' | '\n' | '\r' | '\t' | '\x0C' | '\x0B' | '\0');
     is_insignificant_whitespace => matches!(self, ' ' | '\r' | '\t' | '\x0C' | '\x0B' | '\0');
+    is_leading_whitespace => self.is_whitespace_or_newline() || matches!(self, '(' | '[' | '{' | ',' | ';' | ':');
+    is_trailing_whitespace => self.is_whitespace_or_newline() || matches!(self, ')' | ']' | '}' | ',' | ';' | ':');
     is_operator => matches!(
         self,
         '+' | '-' | '*' | '/' | '%' | '<' | '>' | '=' | '&' | '|' | '^' | '!' | '~'

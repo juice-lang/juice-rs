@@ -10,9 +10,24 @@ diagnostic!(
         [error] InvalidDigit(digit_name: &'static str, c: into Colored<char>, literal_name: &'static str) =>
             "Invalid {} `{}` in {} literal",
         [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
+        [error] ExpectedStringLiteralTerminator(terminator: into Colored<&'static str>) =>
+            "Expected `{}` to terminate string literal",
+        [error] NewlineInLiteral(literal_name: &'static str) => "Newline in {} literal",
+        [error] ExpectedEscapeSequence(c: into Colored<char> = '\\', literal_name: &'static str) => "Expected escape sequence after `{}` in {} literal",
         [error] InvalidUnicodeScalar(hex: into Colored<&'a str>) => "Invalid Unicode scalar value `{}`",
+        [error] InvalidEscapeSequence(c: into Colored<char>, literal_name: &'static str) =>
+            "Invalid escape sequence `{}` in {} literal",
+        [error] ExpectedUnicodeEscapeBrace(c: into Colored<char> = '{', literal_name: &'static str) =>
+            "Expected `{}` to start Unicode escape in {} literal",
+        [error] InvalidUnicodeEscapeDigit(c: into Colored<char>, literal_name: &'static str) =>
+            "Invalid Unicode escape digit `{}` in {} literal",
+        [error] MissingUnicodeEscape(literal_name: &'static str) => "Missing Unicode escape sequence in {} literal",
+        [error] OverlongUnicodeEscape(literal_name: &'static str) =>
+            "Unicode escape sequence in {} literal is too long",
         [error] InsufficientIndentation => "Insufficient indentation in multiline string literal",
-        [error] ExpectedInterpolationEnd(c: into Colored<char> = '}') => "Expected `{}` to end interpolation in string literal",
+        [error] ExpectedInterpolationEnd(c: into Colored<char> = '}') =>
+            "Expected `{}` to end interpolation in string literal",
+        [error] NewlineInInterpolation => "Newline in string interpolation",
     }
 
     #[derive(Debug, Clone)]

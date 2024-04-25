@@ -1,4 +1,4 @@
-use ariadne::{Color, ColorGenerator, Label, Report};
+use ariadne::{Color, ColorGenerator, Config, IndexType, Label, Report};
 use juice_core::diag::ColorExt as _;
 
 use super::{DiagnosticEngine, DiagnosticReport};
@@ -24,6 +24,7 @@ impl DefaultConsumer {
         let kind = diagnostic.get_kind();
 
         let mut builder = Report::build(kind.into(), source_loc.source, source_loc.offset)
+            .with_config(Config::default().with_index_type(IndexType::Byte))
             .with_code(diagnostic.get_code())
             .with_message(diagnostic.into_formatted_message(kind));
 
