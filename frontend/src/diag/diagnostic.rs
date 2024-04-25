@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use juice_core::diag::Colored;
 use juice_macros::diagnostic;
 
@@ -10,11 +12,15 @@ diagnostic!(
         [error] InvalidDigit(digit_name: &'static str, c: into Colored<char>, literal_name: &'static str) =>
             "Invalid {} `{}` in {} literal",
         [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
-        [error] ExpectedStringLiteralTerminator(terminator: into Colored<&'static str>) =>
-            "Expected `{}` to terminate string literal",
+        [error] ExpectedLiteralTerminator(terminator: into Colored<Cow<'static, str>>, literal_name: &'static str) =>
+            "Expected `{}` to terminate {} literal",
+        [error] EmptyLiteral(literal_name: &'static str) => "Empty {} literal",
+        [error] StringInCharLiteral => "Character literal may only contain one codepoint",
         [error] NewlineInLiteral(literal_name: &'static str) => "Newline in {} literal",
-        [error] ExpectedEscapeSequence(c: into Colored<char> = '\\', literal_name: &'static str) => "Expected escape sequence after `{}` in {} literal",
-        [error] InvalidUnicodeScalar(hex: into Colored<&'a str>) => "Invalid Unicode scalar value `{}`",
+        [error] ExpectedEscapeSequence(c: into Colored<char> = '\\', literal_name: &'static str) =>
+            "Expected escape sequence after `{}` in {} literal",
+        [error] InvalidUnicodeScalar(hex: into Colored<&'a str>, literal_name: &'static str) =>
+            "Invalid Unicode scalar value `{}` in {} literal",
         [error] InvalidEscapeSequence(c: into Colored<char>, literal_name: &'static str) =>
             "Invalid escape sequence `{}` in {} literal",
         [error] ExpectedUnicodeEscapeBrace(c: into Colored<char> = '{', literal_name: &'static str) =>

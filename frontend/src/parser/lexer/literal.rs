@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use juice_core::{CharExt, OptionExt};
 use num_bigint::BigUint;
@@ -233,10 +233,153 @@ impl<'a> LiteralKind<'a> {
     }
 
     pub fn lex_char(lexer: &mut Lexer<'a>) -> Self {
-        todo!()
+        let start_loc = lexer.get_current_loc() - 1;
+
+        let terminator = Cow::Borrowed("'");
+
+        let Some(c) = lexer.advance() else {
+            lexer
+                .error_at_end(
+                    Diagnostic::expected_literal_terminator(terminator, "character"),
+                    DiagnosticContextNote::unterminated_literal_location(),
+                )
+                .record();
+
+            return Self::InvalidChar;
+        };
+
+        let content = match c {
+            '\'' => {
+                lexer
+                    .error_at_token(
+                        start_loc,
+                        Diagnostic::empty_literal("character"),
+                        DiagnosticContextNote::literal_location(),
+                    )
+                    .record();
+
+                return Self::InvalidChar;
+            }
+            '\r' | '\n' => {
+                let newline_start = lexer.get_current_loc() - 1;
+
+                if c == '\r' {
+                    lexer.match_char_eq('\n');
+                }
+
+                if lexer.peek() == Some('\'') {
+                    lexer
+                        .error_at_token(
+                            newline_start,
+                            Diagnostic::newline_in_literal("character"),
+                            DiagnosticContextNote::containing_literal_location(),
+                        )
+                        .with_note(DiagnosticNote::newline_in_literal())
+                        .record();
+
+                    None
+                } else {
+                    lexer
+                        .error_at_end(
+                            Diagnostic::expected_literal_terminator(terminator, "character"),
+                            DiagnosticContextNote::unterminated_literal_location(),
+                        )
+                        .record();
+
+                    return Self::InvalidChar;
+                }
+            }
+            '\\' => {
+                let (escaped, was_newline) = Self::consume_escape_sequence(lexer, false, "character");
+
+                if was_newline && lexer.peek() != Some('\'') {
+                    lexer
+                        .error_at_end(
+                            Diagnostic::expected_literal_terminator(terminator, "character"),
+                            DiagnosticContextNote::unterminated_literal_location(),
+                        )
+                        .record();
+
+                    return Self::InvalidChar;
+                }
+
+                escaped
+            }
+            _ => Some(c),
+        };
+
+        if !lexer.match_char_eq('\'') {
+            if !matches!(
+                Self::lex_string_impl(lexer, start_loc, terminator, None, false, true, "character"),
+                Self::InvalidString
+            ) {
+                lexer
+                    .error_at_token(
+                        start_loc,
+                        Diagnostic::string_in_char_literal(),
+                        DiagnosticContextNote::containing_literal_location(),
+                    )
+                    .with_note(DiagnosticNote::string_in_char_literal())
+                    .record();
+            }
+
+            Self::InvalidChar
+        } else if let Some(content) = content {
+            Self::Char(content)
+        } else {
+            Self::InvalidChar
+        }
     }
 
     pub fn lex_string(lexer: &mut Lexer<'a>) -> Self {
+        let start_loc = lexer.get_current_loc() - 1;
+
+        let is_multiline = lexer.match_str(r#""""#); // One quote is already consumed by the lexer
+        let terminator = Cow::Borrowed(if is_multiline { r#"""""# } else { r#"""# });
+
+        Self::lex_string_impl(lexer, start_loc, terminator, None, is_multiline, false, "string")
+    }
+
+    pub fn lex_raw_string(lexer: &mut Lexer<'a>) -> Self {
+        let start_loc = lexer.get_current_loc() - 1;
+        let mut raw_level = 1;
+
+        while lexer.match_char_eq('#') {
+            raw_level += 1;
+        }
+
+        let is_multiline = if lexer.match_str(r#"""""#) {
+            true
+        } else {
+            assert_eq!(lexer.advance(), Some('"'), "Raw string should start with `\"`");
+            false
+        };
+
+        let mut terminator = String::from(if is_multiline { r#"""""# } else { r#"""# });
+        terminator += &"#".repeat(raw_level);
+
+        let terminator = Cow::from(terminator);
+
+        Self::lex_string_impl(
+            lexer,
+            start_loc,
+            terminator,
+            Some(raw_level),
+            is_multiline,
+            false,
+            "raw string",
+        )
+    }
+
+    fn lex_string_impl(
+        lexer: &mut Lexer<'a>,
+        start_loc: SourceLoc<'a>,
+        terminator: Cow<'static, str>,
+        raw_level: Option<usize>,
+        is_multiline: bool,
+        stop_on_newline: bool,
+        literal_name: &'static str,
+    ) -> Self {
         enum Part<'a> {
             String {
                 content: String,
@@ -245,12 +388,10 @@ impl<'a> LiteralKind<'a> {
             Interpolation(Vec<Token<'a>>),
         }
 
-        let is_multiline = lexer.match_str(r#""""#); // One quote is already consumed by the lexer
-
         if is_multiline && lexer.in_interpolation {
             lexer
                 .error_at_token(
-                    lexer.get_current_loc() - 3,
+                    start_loc,
                     Diagnostic::multiline_string_in_interpolation(),
                     DiagnosticContextNote::literal_location(),
                 )
@@ -263,12 +404,14 @@ impl<'a> LiteralKind<'a> {
         let mut current_newline_locations = Vec::new();
 
         loop {
-            let Some(c) = lexer.advance() else {
-                let terminator = if is_multiline { r#"""""# } else { r#"""# };
+            if lexer.match_str(&terminator) {
+                break;
+            }
 
+            let Some(c) = lexer.advance() else {
                 lexer
                     .error_at_end(
-                        Diagnostic::expected_string_literal_terminator(terminator),
+                        Diagnostic::expected_literal_terminator(terminator, literal_name),
                         DiagnosticContextNote::unterminated_literal_location(),
                     )
                     .record();
@@ -277,25 +420,29 @@ impl<'a> LiteralKind<'a> {
             };
 
             match c {
-                '"' => {
-                    if !is_multiline || lexer.match_str(r#""""#) {
-                        break;
-                    } else {
-                        current_content.push('"');
-                    }
-                }
                 '\r' | '\n' => {
-                    let start = lexer.current - 1;
+                    let newline_start = lexer.get_current_loc() - 1;
 
                     if c == '\r' {
                         lexer.match_char_eq('\n');
                     }
 
+                    if stop_on_newline {
+                        lexer
+                            .error_at_end(
+                                Diagnostic::expected_literal_terminator(terminator, literal_name),
+                                DiagnosticContextNote::unterminated_literal_location(),
+                            )
+                            .record();
+
+                        return Self::InvalidString;
+                    }
+
                     if !is_multiline {
                         lexer
                             .error_at_token(
-                                lexer.source.get_loc(start),
-                                Diagnostic::newline_in_literal("string"),
+                                newline_start,
+                                Diagnostic::newline_in_literal(literal_name),
                                 DiagnosticContextNote::containing_literal_location(),
                             )
                             .with_note(DiagnosticNote::newline_in_literal())
@@ -306,7 +453,14 @@ impl<'a> LiteralKind<'a> {
                     current_newline_locations.push((current_content.len(), lexer.get_current_loc()));
                 }
                 '\\' => {
-                    let (escaped, was_newline) = Self::consume_escape_sequence(lexer, is_multiline, "string");
+                    if let Some(raw_level) = raw_level {
+                        if !lexer.match_str(&"#".repeat(raw_level)) {
+                            current_content.push(c);
+                            continue;
+                        }
+                    }
+
+                    let (escaped, was_newline) = Self::consume_escape_sequence(lexer, is_multiline, literal_name);
                     if let Some(escaped) = escaped {
                         current_content.push(escaped);
                     }
@@ -315,7 +469,7 @@ impl<'a> LiteralKind<'a> {
                         current_newline_locations.push((current_content.len(), lexer.get_current_loc()));
                     }
                 }
-                '$' => {
+                '$' if raw_level.is_none() => {
                     if lexer.match_char_eq('{') {
                         if !current_content.is_empty() {
                             let content = std::mem::take(&mut current_content);
@@ -325,8 +479,6 @@ impl<'a> LiteralKind<'a> {
                                 newline_locations,
                             });
                         }
-
-                        let interpolation_start = lexer.current;
 
                         let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect());
 
@@ -459,10 +611,6 @@ impl<'a> LiteralKind<'a> {
         Arc::from(string)
     }
 
-    pub fn lex_raw_string(lexer: &mut Lexer<'a>) -> Self {
-        todo!()
-    }
-
     fn consume_escape_sequence(
         lexer: &mut Lexer<'a>,
         is_multiline: bool,
@@ -482,7 +630,7 @@ impl<'a> LiteralKind<'a> {
                             lexer
                                 .error_at_token(
                                     lexer.source.get_loc(start),
-                                    Diagnostic::newline_in_literal("string"),
+                                    Diagnostic::newline_in_literal(literal_name),
                                     DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_note(DiagnosticNote::newline_in_literal())
@@ -598,7 +746,7 @@ impl<'a> LiteralKind<'a> {
                             lexer
                                 .error_at_token(
                                     range.start_loc(),
-                                    Diagnostic::invalid_unicode_scalar(range.get_str()),
+                                    Diagnostic::invalid_unicode_scalar(range.get_str(), literal_name),
                                     DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::invalid_unicode_scalar_location())

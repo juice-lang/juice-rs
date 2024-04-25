@@ -30,8 +30,10 @@ diagnostic_note!(
         CommentTerminatorInOperator(symbols: into Colored<&str> = "*/") =>
             "The string `{}` is always interpreted as a block comment terminator, even if it is part of an operator",
         UnicodeEscapeLength => "Unicode escape sequences must be between 1 and 8 hexadecimal digits long",
-        NewlineInLiteral(delimiter: into Colored<&'static str> = r#"""""#) =>
-            "Only multiline string literals (delimited by `{}`) can contain newlines",
+        StringInCharLiteral(del: into Colored<&'static str> = r#"""#) =>
+            "If you meant to write a string literal, use double quotes (`{}`) instead",
+        NewlineInLiteral(del: into Colored<&'static str> = r#"""""#, escape: into Colored<&'static str> = r#"\n"#) =>
+            "Only multiline string literals (delimited by `{}`) can contain newlines, use `{}` instead",
         NewlineInInterpolation => "Consider introducing a variable for complex interpolated expressions",
         InsufficientIndentation =>
             "The indentation of the last line gets stripped from all other lines in multiline string literals"
