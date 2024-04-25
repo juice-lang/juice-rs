@@ -192,7 +192,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn with_interpolation<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let interpolation_start = self.current;
+        let interpolation_start = self.current - 2;
 
         let outer_start = self.start;
         let outer_leading_whitespace_start = self.leading_whitespace_start;
@@ -218,6 +218,15 @@ impl<'a> Lexer<'a> {
         self.in_interpolation = outer_in_interpolation;
         self.brace_depth = outer_brace_depth;
 
+        self.expect_char_eq('}', |l| {
+            l.errors.push(Error {
+                source_loc: l.get_current_loc(),
+                diagnostic: Diagnostic::expected_interpolation_end(),
+                context_notes: Vec::new(),
+                note: None,
+            });
+        });
+
         for error in std::mem::replace(&mut self.errors, outer_errors) {
             let Error {
                 source_loc,
@@ -234,7 +243,7 @@ impl<'a> Lexer<'a> {
             outer_pending_errors.push(PendingError {
                 source_loc,
                 diagnostic,
-                initial_context_note: DiagnosticContextNote::literal_location(),
+                initial_context_note: DiagnosticContextNote::containing_literal_location(),
                 context_notes,
                 note,
             });

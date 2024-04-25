@@ -98,7 +98,7 @@ impl<'a> LiteralKind<'a> {
                     lexer
                         .error_at_end(
                             Diagnostic::missing_digit(radix.digit_name(), "integer"),
-                            DiagnosticContextNote::literal_location(),
+                            DiagnosticContextNote::containing_literal_location(),
                         )
                         .record();
 
@@ -130,7 +130,7 @@ impl<'a> LiteralKind<'a> {
                     .error_at_token(
                         lexer.get_current_loc(),
                         Diagnostic::invalid_digit(radix.digit_name(), lexer.peek().unwrap(), "integer"),
-                        DiagnosticContextNote::literal_location(),
+                        DiagnosticContextNote::containing_literal_location(),
                     )
                     .with_context_note(range, DiagnosticContextNote::invalid_digit_location());
 
@@ -166,7 +166,7 @@ impl<'a> LiteralKind<'a> {
                 lexer
                     .error_at_end(
                         Diagnostic::missing_digit("digit", "floating-point"),
-                        DiagnosticContextNote::literal_location(),
+                        DiagnosticContextNote::containing_literal_location(),
                     )
                     .record();
 
@@ -188,7 +188,7 @@ impl<'a> LiteralKind<'a> {
             .error_at_token(
                 lexer.get_current_loc(),
                 Diagnostic::invalid_digit("digit", lexer.peek().unwrap(), "floating-point"),
-                DiagnosticContextNote::literal_location(),
+                DiagnosticContextNote::containing_literal_location(),
             )
             .with_context_note(range, DiagnosticContextNote::invalid_digit_location())
             .record();
@@ -247,7 +247,16 @@ impl<'a> LiteralKind<'a> {
 
         let is_multiline = lexer.match_str(r#""""#); // One quote is already consumed by the lexer
 
-        let terminator = if is_multiline { r#"""""# } else { r#"""# };
+        if is_multiline && lexer.in_interpolation {
+            lexer
+                .error_at_token(
+                    lexer.get_current_loc() - 3,
+                    Diagnostic::multiline_string_in_interpolation(),
+                    DiagnosticContextNote::literal_location(),
+                )
+                .with_note(DiagnosticNote::newline_in_interpolation())
+                .record();
+        }
 
         let mut parts = Vec::new();
         let mut current_content = String::new();
@@ -255,6 +264,8 @@ impl<'a> LiteralKind<'a> {
 
         loop {
             let Some(c) = lexer.advance() else {
+                let terminator = if is_multiline { r#"""""# } else { r#"""# };
+
                 lexer
                     .error_at_end(
                         Diagnostic::expected_string_literal_terminator(terminator),
@@ -285,7 +296,7 @@ impl<'a> LiteralKind<'a> {
                             .error_at_token(
                                 lexer.source.get_loc(start),
                                 Diagnostic::newline_in_literal("string"),
-                                DiagnosticContextNote::literal_location(),
+                                DiagnosticContextNote::containing_literal_location(),
                             )
                             .with_note(DiagnosticNote::newline_in_literal())
                             .record();
@@ -319,25 +330,7 @@ impl<'a> LiteralKind<'a> {
 
                         let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect());
 
-                        if lexer.match_char_eq('}') {
-                            parts.push(Part::Interpolation(tokens));
-                        } else {
-                            assert!(
-                                lexer.peek().is_none(),
-                                "The inner lexer should have stopped at the end of either the interpolation or the file"
-                            );
-
-                            let range = lexer.source.get_range(interpolation_start, lexer.current);
-
-                            lexer
-                                .error_at_token(
-                                    range.end_loc(),
-                                    Diagnostic::expected_interpolation_end(),
-                                    DiagnosticContextNote::literal_location(),
-                                )
-                                .with_context_note(range, DiagnosticContextNote::interpolation_location())
-                                .record();
-                        }
+                        parts.push(Part::Interpolation(tokens));
                     }
                 }
                 _ => {
@@ -438,7 +431,7 @@ impl<'a> LiteralKind<'a> {
                     .error_at_token(
                         loc + i,
                         Diagnostic::insufficient_indentation(),
-                        DiagnosticContextNote::literal_location(),
+                        DiagnosticContextNote::containing_literal_location(),
                     )
                     .with_context_note(loc.to_range(1), DiagnosticContextNote::line_start_location())
                     .with_context_note(indentation, DiagnosticContextNote::indentation_location())
@@ -490,7 +483,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     lexer.source.get_loc(start),
                                     Diagnostic::newline_in_literal("string"),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_note(DiagnosticNote::newline_in_literal())
                                 .record();
@@ -514,7 +507,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     range.end_loc(),
                                     Diagnostic::expected_unicode_escape_brace(literal_name),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
                                 .record();
@@ -537,7 +530,7 @@ impl<'a> LiteralKind<'a> {
                                     .error_at_token(
                                         range.start_loc(),
                                         Diagnostic::invalid_unicode_escape_digit(c, literal_name),
-                                        DiagnosticContextNote::literal_location(),
+                                        DiagnosticContextNote::containing_literal_location(),
                                     )
                                     .with_context_note(range, DiagnosticContextNote::invalid_digit_location())
                                     .with_note(DiagnosticNote::expected_digit("hexadecimal digit", "0-9, a-f, or A-F"))
@@ -559,7 +552,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     range.end_loc(),
                                     Diagnostic::expected_unicode_escape_brace(literal_name),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
                                 .record();
@@ -574,7 +567,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     lexer.source.get_loc(lexer.current - 1),
                                     Diagnostic::missing_unicode_escape(literal_name),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
                                 .with_note(DiagnosticNote::unicode_escape_length())
@@ -588,7 +581,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     lexer.source.get_loc(lexer.current - i - 1),
                                     Diagnostic::overlong_unicode_escape(literal_name),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::unicode_escape_location())
                                 .with_note(DiagnosticNote::unicode_escape_length())
@@ -606,7 +599,7 @@ impl<'a> LiteralKind<'a> {
                                 .error_at_token(
                                     range.start_loc(),
                                     Diagnostic::invalid_unicode_scalar(range.get_str()),
-                                    DiagnosticContextNote::literal_location(),
+                                    DiagnosticContextNote::containing_literal_location(),
                                 )
                                 .with_context_note(range, DiagnosticContextNote::invalid_unicode_scalar_location())
                                 .record();
@@ -623,7 +616,7 @@ impl<'a> LiteralKind<'a> {
                             .error_at_token(
                                 range.start_loc(),
                                 Diagnostic::invalid_escape_sequence(c, literal_name),
-                                DiagnosticContextNote::literal_location(),
+                                DiagnosticContextNote::containing_literal_location(),
                             )
                             .with_context_note(range, DiagnosticContextNote::escape_sequence_location())
                             .record();
@@ -635,7 +628,7 @@ impl<'a> LiteralKind<'a> {
                 lexer
                     .error_at_end(
                         Diagnostic::expected_escape_sequence(literal_name),
-                        DiagnosticContextNote::literal_location(),
+                        DiagnosticContextNote::containing_literal_location(),
                     )
                     .record();
 

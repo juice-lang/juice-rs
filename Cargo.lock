@@ -80,7 +80,7 @@ dependencies = [
 [[package]]
 name = "ariadne"
 version = "0.4.0"
-source = "git+https://github.com/zesterer/ariadne.git?rev=a061071#a061071ad130c235e650dd2aaed9a9a7d15d3d7d"
+source = "git+https://github.com/zesterer/ariadne.git?rev=66409d3#66409d319ed2f46809b0b2b61a0f04c76ffcdd73"
 dependencies = [
  "unicode-width",
  "yansi",
