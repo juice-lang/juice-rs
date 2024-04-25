@@ -7,7 +7,7 @@ use std::{
 };
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand};
-use frontend::{RunnerAction as FrontendAction, RunnerArgs as FrontendArgs};
+use juice_frontend::{RunnerAction as FrontendAction, RunnerArgs as FrontendArgs};
 
 use crate::driver::{Error as DriverError, MainAction, MainArgs, Result as DriverResult};
 

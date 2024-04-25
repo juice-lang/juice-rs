@@ -1,4 +1,4 @@
-#![feature(generic_nonzero, iter_advance_by)]
+#![feature(iter_advance_by)]
 
 mod char_ext;
 pub mod diag;

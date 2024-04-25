@@ -1,4 +1,4 @@
-use ::frontend::{Runner as FrontendRunner, RunnerArgs as FrontendArgs};
+use juice_frontend::{Runner as FrontendRunner, RunnerArgs as FrontendArgs};
 
 use super::{Driver as DriverTrait, Error as DriverError, Result as DriverResult};
 

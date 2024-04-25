@@ -80,8 +80,7 @@ dependencies = [
 [[package]]
 name = "ariadne"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd002a6223f12c7a95cdd4b1cb3a0149d22d37f7a9ecdb2cb691a071fe236c29"
+source = "git+https://github.com/zesterer/ariadne.git?rev=a061071#a061071ad130c235e650dd2aaed9a9a7d15d3d7d"
 dependencies = [
  "unicode-width",
  "yansi",
@@ -481,6 +480,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "in_definite"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5bd47a3c8188d842aa7ff4dd65a9732f740fcbe04689ecfbfef43c465b381de"
+
+[[package]]
 name = "itertools"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -508,6 +513,7 @@ name = "juice-core"
 version = "0.1.0"
 dependencies = [
  "ariadne",
+ "in_definite",
 ]
 
 [[package]]

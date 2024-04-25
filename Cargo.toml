@@ -2,6 +2,13 @@
 members = ["core", "driver", "frontend", "macros"]
 resolver = "2"
 
+[workspace.package]
+rust-version = "1.79.0"
+
 [workspace.dependencies]
-ariadne = "0.4.0"
+ariadne = { git = "https://github.com/zesterer/ariadne.git", rev = "a061071" }
 derive_more = "0.99.17"
+juice-core = { version = "0.1.0", path = "core" }
+juice-driver = { version = "0.1.0", path = "driver" }
+juice-frontend = { version = "0.1.0", path = "frontend" }
+juice-macros = { version = "0.1.0", path = "macros" }
