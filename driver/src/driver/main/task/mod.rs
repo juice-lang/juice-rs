@@ -1,3 +1,5 @@
+mod os;
+
 use std::{
     borrow::Cow,
     env,
@@ -14,8 +16,8 @@ use std::{
 
 use async_process::Command;
 use tempfile::Builder as TempFileBuilder;
-use which::which;
 
+use self::os::get_linker_path_and_args;
 use super::Action;
 use crate::{
     cli::OutputFilePath,
@@ -299,31 +301,7 @@ pub struct LinkingTask {
 
 impl LinkingTask {
     pub async fn new(inputs: Vec<Box<dyn ErasedTask>>, output_path: OutputFilePath) -> DriverResult<Self> {
-        #[cfg(target_os = "macos")]
-        let executable_path = which("ld").map_err(|err| DriverError::ExecutableNotFound {
-            executable_name: String::from("ld"),
-            error: err,
-        })?;
-        #[cfg(not(target_os = "macos"))]
-        let executable_path = compile_error!("This platform is not supported yet");
-
-        #[cfg(target_os = "macos")]
-        let mut arguments = vec![
-            OsStr::new("-syslibroot"),
-            super::macos::get_sdk_path().await?.as_os_str(),
-            OsStr::new("-lSystem"),
-        ];
-        #[cfg(not(target_os = "macos"))]
-        let mut arguments = compile_error!("This platform is not supported yet");
-
-        arguments.push(OsStr::new("-o"));
-        arguments.push(output_path.as_os_str());
-
-        let mut arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
-
-        for input in &inputs {
-            arguments.push(input.get_output_path().as_os_str().to_owned());
-        }
+        let (executable_path, arguments) = get_linker_path_and_args(&inputs, &output_path).await?;
 
         Ok(Self {
             executable_path,

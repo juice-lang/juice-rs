@@ -1,5 +1,3 @@
-#[cfg(target_os = "macos")]
-mod macos;
 mod task;
 
 use std::{

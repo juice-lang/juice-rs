@@ -1,5 +1,5 @@
 [package]
-name = "juice"
+name = "juice-driver"
 version = "0.1.0"
 edition = "2021"
 rust-version = { workspace = true }
@@ -9,9 +9,13 @@ rust-version = { workspace = true }
 [dependencies]
 async-once-cell = "0.5.3"
 async-process = "2.1.0"
+cfg-if = "1.0.0"
 clap = { version = "4.5.1", features = ["derive"] }
 derive_more = { workspace = true }
 juice-frontend = { workspace = true }
 tempfile = "3.10.1"
 tokio = { version = "1.36.0", features = ["full"] }
 which = "6.0.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+itertools = "0.12.1"

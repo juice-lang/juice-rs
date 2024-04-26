@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     os::unix::{ffi::OsStrExt as _, process::ExitStatusExt as _},
     path::{Path, PathBuf},
 };
@@ -8,9 +8,12 @@ use async_once_cell::OnceCell;
 use async_process::Command;
 use which::which;
 
-use crate::driver::{Error as DriverError, Result as DriverResult};
+use crate::{
+    cli::OutputFilePath,
+    driver::{main::task::ErasedTask, Error as DriverError, Result as DriverResult},
+};
 
-pub async fn get_sdk_path() -> DriverResult<&'static Path> {
+async fn get_sdk_path() -> DriverResult<&'static Path> {
     static SDK_PATH: OnceCell<PathBuf> = OnceCell::new();
 
     SDK_PATH
@@ -50,4 +53,31 @@ pub async fn get_sdk_path() -> DriverResult<&'static Path> {
         })
         .await
         .map(AsRef::as_ref)
+}
+
+pub async fn get_linker_path_and_args(
+    inputs: &Vec<Box<dyn ErasedTask>>,
+    output_path: &OutputFilePath,
+) -> DriverResult<(PathBuf, Vec<OsString>)> {
+    let executable_path = which("ld").map_err(|err| DriverError::ExecutableNotFound {
+        executable_name: String::from("ld"),
+        error: err,
+    })?;
+
+    let mut arguments = vec![
+        OsStr::new("-syslibroot"),
+        get_sdk_path().await?.as_os_str(),
+        OsStr::new("-lSystem"),
+    ];
+
+    arguments.push(OsStr::new("-o"));
+    arguments.push(output_path.as_os_str());
+
+    let mut arguments = arguments.into_iter().map(OsString::from).collect::<Vec<_>>();
+
+    for input in inputs {
+        arguments.push(input.get_output_path().as_os_str().to_owned());
+    }
+
+    Ok((executable_path, arguments))
 }

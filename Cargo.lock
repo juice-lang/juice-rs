@@ -496,25 +496,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "juice"
-version = "0.1.0"
-dependencies = [
- "async-once-cell",
- "async-process",
- "clap",
- "derive_more",
- "juice-frontend",
- "tempfile",
- "tokio",
- "which",
-]
-
-[[package]]
 name = "juice-core"
 version = "0.1.0"
 dependencies = [
  "ariadne",
  "in_definite",
+]
+
+[[package]]
+name = "juice-driver"
+version = "0.1.0"
+dependencies = [
+ "async-once-cell",
+ "async-process",
+ "cfg-if",
+ "clap",
+ "derive_more",
+ "itertools",
+ "juice-frontend",
+ "tempfile",
+ "tokio",
+ "which",
 ]
 
 [[package]]
