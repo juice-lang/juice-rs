@@ -1,12 +1,12 @@
 use std::{
-    collections::{hash_map, HashMap},
+    collections::HashMap,
     fmt::{Debug, Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
-    iter::FusedIterator,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+use derive_where::derive_where;
 use lasso::{Rodeo, Spur};
 
 use crate::{
@@ -14,14 +14,47 @@ use crate::{
     Result,
 };
 
+pub trait SourceManager: private::SourceManager + Debug + Sized {
+    type Index;
+    type Output<T>;
+
+    fn get_source(&mut self, index: Self::Index) -> Self::Output<Source<Self>>;
+    fn get_main_source(&self) -> Source<Self>;
+}
+
+mod private {
+    use std::{
+        fmt::{Debug, Formatter, Result as FmtResult},
+        hash::Hash,
+    };
+
+    pub trait SourceManager {
+        type Key: Debug + Clone + Copy + Eq + Hash;
+        type Storage: AsRef<str>;
+
+        fn get_storage(&self, key: Self::Key) -> &Self::Storage;
+        fn display_source(&self, key: Self::Key, f: &mut Formatter<'_>) -> FmtResult;
+    }
+
+    pub trait AriadneSourceManager: super::SourceManager {
+        fn get_ariadne_source(&self, key: Self::Key) -> &ariadne::Source<Self::Storage>;
+    }
+}
+
+pub trait AriadneSourceManager: private::AriadneSourceManager {
+    fn get_cache(&self) -> SourceCache<Self> {
+        SourceCache { source_manager: self }
+    }
+}
+
 #[derive(Debug)]
-pub struct SourceManager {
+pub struct DefaultSourceManager {
     main_source_key: Spur,
     sources: HashMap<Spur, (Arc<str>, ariadne::Source<Arc<str>>)>,
     rodeo: Rodeo,
 }
 
-impl SourceManager {
+impl DefaultSourceManager {
     pub fn new(main_source_filepath: PathBuf) -> Result<Self> {
         let mut rodeo = Rodeo::new();
 
@@ -43,7 +76,35 @@ impl SourceManager {
         })
     }
 
-    pub fn get_source(&mut self, filepath: PathBuf) -> Result<Source> {
+    fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
+        let mut string = std::fs::read_to_string(path)?;
+
+        if !string.ends_with('\n') {
+            string.push('\n');
+        }
+
+        Ok(string)
+    }
+}
+
+impl private::SourceManager for DefaultSourceManager {
+    type Key = Spur;
+    type Storage = Arc<str>;
+
+    fn get_storage(&self, key: Self::Key) -> &Self::Storage {
+        &self.sources[&key].0
+    }
+
+    fn display_source(&self, key: Self::Key, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.rodeo.resolve(&key))
+    }
+}
+
+impl SourceManager for DefaultSourceManager {
+    type Index = PathBuf;
+    type Output<T> = Result<T>;
+
+    fn get_source(&mut self, filepath: PathBuf) -> Result<Source<Self>> {
         let filepath = filepath.canonicalize()?;
         let filepath_str = filepath.to_string_lossy();
 
@@ -67,58 +128,74 @@ impl SourceManager {
         }
     }
 
-    pub fn get_main_source(&self) -> Source {
+    fn get_main_source(&self) -> Source<Self> {
         Source {
             key: self.main_source_key,
             source_manager: self,
         }
     }
+}
 
-    pub fn get_cache(&self) -> SourceCache {
-        SourceCache { source_manager: self }
-    }
-
-    pub fn iter(&self) -> SourceIter {
-        SourceIter {
-            source_manager: self,
-            iter: self.sources.keys(),
-        }
-    }
-
-    fn read_to_string(path: impl AsRef<Path>) -> Result<String> {
-        let mut string = std::fs::read_to_string(path)?;
-
-        if !string.ends_with('\n') {
-            string.push('\n');
-        }
-
-        Ok(string)
+impl private::AriadneSourceManager for DefaultSourceManager {
+    fn get_ariadne_source(&self, key: Self::Key) -> &ariadne::Source<Self::Storage> {
+        &self.sources[&key].1
     }
 }
 
-pub struct SourceCache<'a> {
-    source_manager: &'a SourceManager,
+impl AriadneSourceManager for DefaultSourceManager {}
+
+pub struct SourceCache<'a, M> {
+    source_manager: &'a M,
 }
 
-impl<'a> ariadne::Cache<Source<'a>> for SourceCache<'a> {
-    type Storage = Arc<str>;
+impl<'a, M: AriadneSourceManager> ariadne::Cache<Source<'a, M>> for SourceCache<'a, M> {
+    type Storage = M::Storage;
 
-    fn fetch(&mut self, id: &Source) -> Result<&ariadne::Source<Self::Storage>, Box<dyn Debug + '_>> {
-        Ok(&self.source_manager.sources[&id.key].1)
+    fn fetch(&mut self, id: &Source<M>) -> Result<&ariadne::Source<Self::Storage>, Box<dyn Debug + '_>> {
+        Ok(self.source_manager.get_ariadne_source(id.key))
     }
 
-    fn display(&self, id: &Source<'a>) -> Option<Box<dyn Display + 'a>> {
+    fn display(&self, id: &Source<'a, M>) -> Option<Box<dyn Display + 'a>> {
         Some(Box::new(*id))
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Source<'a> {
-    key: Spur,
-    source_manager: &'a SourceManager,
+#[derive_where(Debug, Clone, Copy)]
+pub struct Source<'a, M: SourceManager> {
+    key: M::Key,
+    source_manager: &'a M,
 }
 
-impl<'a> Source<'a> {
+impl<'a, M: SourceManager> Source<'a, M> {
+    pub fn get_contents(&self) -> &'a str {
+        self.source_manager.get_storage(self.key).as_ref()
+    }
+
+    pub fn get_loc(&self, offset: usize) -> SourceLoc<'a, M> {
+        SourceLoc::new(*self, offset)
+    }
+
+    pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'a, M> {
+        SourceRange::new(*self, start, end)
+    }
+}
+
+impl<'a, M: SourceManager<Storage = Arc<str>>> Source<'a, M> {
+    pub fn get_contents_owned(&self) -> Arc<str> {
+        self.source_manager.get_storage(self.key).clone()
+    }
+}
+
+impl<'a, M: AriadneSourceManager> Source<'a, M> {
+    pub fn get_line_and_column(&self, offset: usize) -> Option<(usize, usize)> {
+        self.source_manager
+            .get_ariadne_source(self.key)
+            .get_offset_line(offset)
+            .map(|(_, line, column)| (line, column))
+    }
+}
+
+impl<'a> Source<'a, DefaultSourceManager> {
     pub fn get_filepath_str(&self) -> &'a str {
         self.source_manager.rodeo.resolve(&self.key)
     }
@@ -126,69 +203,78 @@ impl<'a> Source<'a> {
     pub fn get_filepath(&self) -> &'a Path {
         Path::new(self.get_filepath_str())
     }
-
-    pub fn get_contents(&self) -> &'a str {
-        &self.source_manager.sources[&self.key].0
-    }
-
-    pub fn get_contents_owned(&self) -> Arc<str> {
-        self.source_manager.sources[&self.key].0.clone()
-    }
-
-    pub fn get_loc(&self, offset: usize) -> SourceLoc<'a> {
-        SourceLoc::new(*self, offset)
-    }
-
-    pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'a> {
-        SourceRange::new(*self, start, end)
-    }
-
-    pub(crate) fn get_ariadne_source(&self) -> &'a ariadne::Source<Arc<str>> {
-        &self.source_manager.sources[&self.key].1
-    }
 }
 
-impl<'a> PartialEq for Source<'a> {
+impl<M: SourceManager> PartialEq for Source<'_, M> {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        self.key == other.key && std::ptr::eq(self.source_manager, other.source_manager)
     }
 }
 
-impl Eq for Source<'_> {}
+impl<M: SourceManager> Eq for Source<'_, M> {}
 
-impl<'a> Hash for Source<'a> {
+impl<M: SourceManager> Hash for Source<'_, M> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.key.hash(state);
     }
 }
 
-impl<'a> Display for Source<'a> {
+impl<M: SourceManager> Display for Source<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.get_filepath_str())
+        self.source_manager.display_source(self.key, f)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SourceIter<'a> {
-    source_manager: &'a SourceManager,
-    iter: hash_map::Keys<'a, Spur, (Arc<str>, ariadne::Source<Arc<str>>)>,
-}
+#[cfg(test)]
+pub mod test {
+    use super::Source;
 
-impl<'a> Iterator for SourceIter<'a> {
-    type Item = Source<'a>;
+    #[derive(Debug)]
+    pub(crate) struct SourceManager {
+        string: &'static str,
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|key| Source {
-            key: *key,
-            source_manager: self.source_manager,
-        })
+    impl SourceManager {
+        pub const fn new(string: &'static str) -> Self {
+            Self { string }
+        }
+    }
+
+    impl super::private::SourceManager for SourceManager {
+        type Key = ();
+        type Storage = &'static str;
+
+        fn get_storage(&self, _: Self::Key) -> &Self::Storage {
+            &self.string
+        }
+
+        fn display_source(&self, _: Self::Key, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "<static string>")
+        }
+    }
+
+    impl super::SourceManager for SourceManager {
+        type Index = ();
+        type Output<T> = T;
+
+        fn get_source(&mut self, _: ()) -> Source<Self> {
+            super::Source {
+                key: (),
+                source_manager: self,
+            }
+        }
+
+        fn get_main_source(&self) -> super::Source<Self> {
+            super::Source {
+                key: (),
+                source_manager: self,
+            }
+        }
+    }
+
+    impl From<&'static str> for SourceManager {
+        fn from(string: &'static str) -> Self {
+            Self::new(string)
+        }
     }
 }
-
-impl<'a> ExactSizeIterator for SourceIter<'a> {
-    fn len(&self) -> usize {
-        self.iter.len()
-    }
-}
-
-impl<'a> FusedIterator for SourceIter<'a> {}

@@ -11,3 +11,8 @@ pub use self::{
     engine::{Engine as DiagnosticEngine, Report as DiagnosticReport},
     static_report::StaticReport as StaticDiagnosticReport,
 };
+
+#[cfg(test)]
+pub(crate) mod test {
+    pub(crate) use super::{consumer::test::Consumer, engine::test::Report};
+}

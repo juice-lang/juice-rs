@@ -4,32 +4,33 @@ use std::{
     ops::{Add, Sub},
 };
 
-use crate::source_manager::Source;
+use derive_where::derive_where;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct SourceLoc<'a> {
-    pub source: Source<'a>,
+use crate::source_manager::{AriadneSourceManager, Source, SourceManager};
+
+#[derive_where(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceLoc<'a, M: SourceManager> {
+    pub source: Source<'a, M>,
     pub offset: usize,
 }
 
-impl<'a> SourceLoc<'a> {
-    pub fn new(source: Source<'a>, offset: usize) -> Self {
+impl<'a, M: SourceManager> SourceLoc<'a, M> {
+    pub fn new(source: Source<'a, M>, offset: usize) -> Self {
         Self { source, offset }
     }
 
-    pub fn to_range(self, len: usize) -> SourceRange<'a> {
+    pub fn to_range(self, len: usize) -> SourceRange<'a, M> {
         SourceRange::new(self.source, self.offset, self.offset + len)
-    }
-
-    pub fn get_line_and_column(&self) -> Option<(usize, usize)> {
-        self.source
-            .get_ariadne_source()
-            .get_offset_line(self.offset)
-            .map(|(_, line, column)| (line, column))
     }
 }
 
-impl<'a> PartialOrd for SourceLoc<'a> {
+impl<M: AriadneSourceManager> SourceLoc<'_, M> {
+    pub fn get_line_and_column(&self) -> Option<(usize, usize)> {
+        self.source.get_line_and_column(self.offset)
+    }
+}
+
+impl<M: SourceManager> PartialOrd for SourceLoc<'_, M> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.source == other.source {
             self.offset.partial_cmp(&other.offset)
@@ -39,7 +40,7 @@ impl<'a> PartialOrd for SourceLoc<'a> {
     }
 }
 
-impl<'a> Add<usize> for SourceLoc<'a> {
+impl<M: SourceManager> Add<usize> for SourceLoc<'_, M> {
     type Output = Self;
 
     fn add(self, rhs: usize) -> Self::Output {
@@ -47,7 +48,7 @@ impl<'a> Add<usize> for SourceLoc<'a> {
     }
 }
 
-impl<'a> Sub<usize> for SourceLoc<'a> {
+impl<M: SourceManager> Sub<usize> for SourceLoc<'_, M> {
     type Output = Self;
 
     fn sub(self, rhs: usize) -> Self::Output {
@@ -55,7 +56,7 @@ impl<'a> Sub<usize> for SourceLoc<'a> {
     }
 }
 
-impl<'a> Display for SourceLoc<'a> {
+impl<M: AriadneSourceManager> Display for SourceLoc<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         if let Some((line, column)) = self.get_line_and_column() {
             write!(f, "{}:{}:{}", self.source, line, column)
@@ -65,23 +66,23 @@ impl<'a> Display for SourceLoc<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct SourceRange<'a> {
-    pub source: Source<'a>,
+#[derive_where(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct SourceRange<'a, M: SourceManager> {
+    pub source: Source<'a, M>,
     pub start: usize,
     pub end: usize,
 }
 
-impl<'a> SourceRange<'a> {
-    pub fn new(source: Source<'a>, start: usize, end: usize) -> Self {
+impl<'a, M: SourceManager> SourceRange<'a, M> {
+    pub fn new(source: Source<'a, M>, start: usize, end: usize) -> Self {
         Self { source, start, end }
     }
 
-    pub fn start_loc(&self) -> SourceLoc<'a> {
+    pub fn start_loc(&self) -> SourceLoc<'a, M> {
         SourceLoc::new(self.source, self.start)
     }
 
-    pub fn end_loc(&self) -> SourceLoc<'a> {
+    pub fn end_loc(&self) -> SourceLoc<'a, M> {
         SourceLoc::new(self.source, self.end)
     }
 
@@ -98,10 +99,10 @@ impl<'a> SourceRange<'a> {
     }
 }
 
-impl<'a> ariadne::Span for SourceRange<'a> {
-    type SourceId = Source<'a>;
+impl<'a, M: SourceManager> ariadne::Span for SourceRange<'a, M> {
+    type SourceId = Source<'a, M>;
 
-    fn source(&self) -> &Source<'a> {
+    fn source(&self) -> &Source<'a, M> {
         &self.source
     }
 
@@ -114,7 +115,7 @@ impl<'a> ariadne::Span for SourceRange<'a> {
     }
 }
 
-impl<'a> Display for SourceRange<'a> {
+impl<M: AriadneSourceManager> Display for SourceRange<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match (
             self.start_loc().get_line_and_column(),

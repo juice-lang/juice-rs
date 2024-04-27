@@ -4,7 +4,12 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{diag::DiagnosticEngine, parser::Lexer, source_manager::SourceManager, Result};
+use crate::{
+    diag::DiagnosticEngine,
+    parser::Lexer,
+    source_manager::{DefaultSourceManager, SourceManager},
+    Result,
+};
 
 macro_rules! check_error {
     ($diagnostics:expr) => {
@@ -61,7 +66,7 @@ impl Runner {
     }
 
     fn run_impl(self) -> Result<bool> {
-        let source_manager = SourceManager::new(self.args.input_filepath)?;
+        let source_manager = DefaultSourceManager::new(self.args.input_filepath)?;
 
         let diagnostics = DiagnosticEngine::new(&source_manager);
 

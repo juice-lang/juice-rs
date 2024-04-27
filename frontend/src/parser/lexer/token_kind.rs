@@ -1,6 +1,7 @@
 use juice_macros::string_enum;
 
 use super::literal::LiteralKind;
+use crate::source_manager::SourceManager;
 
 string_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,10 +35,10 @@ string_enum! {
 }
 
 #[derive(Debug, Clone)]
-pub enum TokenKind<'a> {
+pub enum TokenKind<'a, M: SourceManager> {
     Keyword(KeywordKind),
     Punctuation(PunctuationKind),
-    Literal(LiteralKind<'a>),
+    Literal(LiteralKind<'a, M>),
     Identifier,
     Operator,
     Unknown,

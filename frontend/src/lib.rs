@@ -1,4 +1,4 @@
-#![feature(iter_advance_by)]
+#![feature(iter_advance_by, try_trait_v2)]
 
 mod diag;
 mod error;

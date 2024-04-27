@@ -14,14 +14,9 @@ impl<'a> StaticReport<'a> {
         Self { diagnostic, note: None }
     }
 
-    pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> StaticReport<'b>
-    where
-        'a: 'b,
-    {
-        StaticReport {
-            note: Some(note),
-            ..self
-        }
+    pub fn with_note(mut self, note: DiagnosticNote<'a>) -> Self {
+        self.note = Some(note);
+        self
     }
 
     pub fn diagnose(self) {

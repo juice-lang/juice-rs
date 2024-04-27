@@ -3,18 +3,18 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use super::{DefaultDiagnosticConsumer, Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticNote};
 use crate::{
     source_loc::{SourceLoc, SourceRange},
-    source_manager::SourceManager,
+    source_manager::{DefaultSourceManager, SourceManager},
     Result,
 };
 
-pub struct Engine<'a, C: DiagnosticConsumer> {
-    source_manager: &'a SourceManager,
+pub struct Engine<'a, M, C> {
+    source_manager: &'a M,
     consumer: C,
     had_error: AtomicBool,
 }
 
-impl<'a, C: DiagnosticConsumer> Engine<'a, C> {
-    pub fn new_with_consumer(source_manager: &'a SourceManager, consumer: C) -> Self {
+impl<'a, M: SourceManager, C: DiagnosticConsumer<'a, M>> Engine<'a, M, C> {
+    pub fn new_with_consumer(source_manager: &'a M, consumer: C) -> Self {
         Self {
             source_manager,
             consumer,
@@ -22,12 +22,16 @@ impl<'a, C: DiagnosticConsumer> Engine<'a, C> {
         }
     }
 
-    pub fn get_source_manager(&self) -> &SourceManager {
+    pub fn get_source_manager(&self) -> &M {
         self.source_manager
     }
 
     pub fn get_consumer(&self) -> &C {
         &self.consumer
+    }
+
+    pub fn into_consumer(self) -> C {
+        self.consumer
     }
 
     pub fn had_error(&self) -> bool {
@@ -38,7 +42,7 @@ impl<'a, C: DiagnosticConsumer> Engine<'a, C> {
         self.had_error.store(true, AtomicOrdering::Release);
     }
 
-    pub fn report<'b>(&'a self, source_loc: SourceLoc<'a>, diagnostic: Diagnostic<'b>) -> Report<'b, C>
+    pub fn report<'b>(&'b self, source_loc: SourceLoc<'a, M>, diagnostic: Diagnostic<'a>) -> Report<'a, 'b, M, C>
     where
         'a: 'b,
     {
@@ -46,23 +50,26 @@ impl<'a, C: DiagnosticConsumer> Engine<'a, C> {
     }
 }
 
-impl<'a> Engine<'a, DefaultDiagnosticConsumer> {
-    pub fn new(source_manager: &'a SourceManager) -> Self {
+impl<'a> Engine<'a, DefaultSourceManager, DefaultDiagnosticConsumer> {
+    pub fn new(source_manager: &'a DefaultSourceManager) -> Self {
         Self::new_with_consumer(source_manager, DefaultDiagnosticConsumer)
     }
 }
 
 #[must_use = "report does nothing unless diagnosed"]
-pub struct Report<'a, C: DiagnosticConsumer> {
-    pub source_loc: SourceLoc<'a>,
+pub struct Report<'a, 'b, M: SourceManager, C> {
+    pub source_loc: SourceLoc<'a, M>,
     pub diagnostic: Diagnostic<'a>,
-    pub context_notes: Vec<(SourceRange<'a>, DiagnosticContextNote<'a>)>,
+    pub context_notes: Vec<(SourceRange<'a, M>, DiagnosticContextNote<'a>)>,
     pub note: Option<DiagnosticNote<'a>>,
-    engine: &'a Engine<'a, C>,
+    engine: &'b Engine<'a, M, C>,
 }
 
-impl<'a, C: DiagnosticConsumer> Report<'a, C> {
-    pub(self) fn new(source_loc: SourceLoc<'a>, diagnostic: Diagnostic<'a>, engine: &'a Engine<'a, C>) -> Self {
+impl<'a, 'b, M: SourceManager, C: DiagnosticConsumer<'a, M>> Report<'a, 'b, M, C>
+where
+    'a: 'b,
+{
+    pub(self) fn new(source_loc: SourceLoc<'a, M>, diagnostic: Diagnostic<'a>, engine: &'b Engine<'a, M, C>) -> Self {
         Self {
             source_loc,
             diagnostic,
@@ -72,31 +79,21 @@ impl<'a, C: DiagnosticConsumer> Report<'a, C> {
         }
     }
 
-    pub fn with_context_note<'b>(
-        self,
-        source_range: SourceRange<'b>,
-        context_note: DiagnosticContextNote<'b>,
-    ) -> Report<'b, C>
-    where
-        'a: 'b,
-    {
-        let mut context_notes = self.context_notes;
-        context_notes.push((source_range, context_note));
-
-        Report { context_notes, ..self }
+    pub fn with_context_note(
+        mut self,
+        source_range: SourceRange<'a, M>,
+        context_note: DiagnosticContextNote<'a>,
+    ) -> Self {
+        self.context_notes.push((source_range, context_note));
+        self
     }
 
-    pub fn with_note<'b>(self, note: DiagnosticNote<'b>) -> Report<'b, C>
-    where
-        'a: 'b,
-    {
-        Report {
-            note: Some(note),
-            ..self
-        }
+    pub fn with_note(mut self, note: DiagnosticNote<'a>) -> Self {
+        self.note = Some(note);
+        self
     }
 
-    pub fn diagnose(self) -> Result<()> {
+    pub fn diagnose(self) -> C::Output {
         let engine = self.engine;
 
         if self.diagnostic.get_kind().is_error() {
@@ -104,5 +101,33 @@ impl<'a, C: DiagnosticConsumer> Report<'a, C> {
         }
 
         engine.get_consumer().consume(self, engine)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use crate::{
+        diag::{consumer::test::Consumer as TestConsumer, Diagnostic, DiagnosticContextNote, DiagnosticNote},
+        source_loc::{SourceLoc, SourceRange},
+        source_manager::test::SourceManager as TestSourceManager,
+    };
+
+    #[derive(Debug, Clone)]
+    pub(crate) struct Report {
+        pub source_loc: SourceLoc<'static, TestSourceManager>,
+        pub diagnostic: Diagnostic<'static>,
+        pub context_notes: Vec<(SourceRange<'static, TestSourceManager>, DiagnosticContextNote<'static>)>,
+        pub note: Option<DiagnosticNote<'static>>,
+    }
+
+    impl<'a> From<super::Report<'static, 'a, TestSourceManager, TestConsumer>> for Report {
+        fn from(report: super::Report<'static, 'a, TestSourceManager, TestConsumer>) -> Self {
+            Self {
+                source_loc: report.source_loc,
+                diagnostic: report.diagnostic,
+                context_notes: report.context_notes,
+                note: report.note,
+            }
+        }
     }
 }
