@@ -12,6 +12,7 @@ diagnostic_note!(
         InterpolationLocation => "In this interpolation",
         CommentLocation => "Comment is here",
         CommentTerminatorLocation => "Comment terminator is here",
+        ContainingOperatorLocation => "In this operator",
         LiteralLocation => "Literal is here",
         ContainingLiteralLocation => "In this literal",
         UnterminatedLiteralLocation => "This literal is unterminated",

@@ -1,4 +1,4 @@
-#![feature(iter_advance_by, try_trait_v2)]
+#![feature(assert_matches, iter_advance_by, macro_metavar_expr, try_trait_v2)]
 
 mod diag;
 mod error;

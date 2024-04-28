@@ -7,7 +7,10 @@ use std::{num::NonZero, ops::Try as _};
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
 use self::literal::LiteralKind;
-pub use self::{token::Token, token_kind::TokenKind};
+pub use self::{
+    token::Token,
+    token_kind::{KeywordKind, PunctuationKind, TokenKind},
+};
 use crate::{
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
     source_loc::{SourceLoc, SourceRange},
@@ -148,12 +151,6 @@ impl<'a, 'b, M: SourceManager> ErrorBuilder<'a, 'b, M> {
             }),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct InterpolationInfo {
-    start: usize,
-    literal_start: usize,
 }
 
 #[derive(Debug)]
@@ -365,6 +362,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
             }
             '&' => {
                 if self.peek() == Some('w') && self.peek2().is_none_or(|c| !c.is_identifier_char()) {
+                    self.advance();
                     Tok![&w]
                 } else if self.peek().is_some_and(CharExt::is_operator) {
                     self.consume_operator(false)
@@ -434,14 +432,19 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
                 }
                 Some('*') => {
                     if self.peek2() == Some('/') {
-                        self.error_with_range(
-                            self.source.get_range(self.current, self.current + 2),
-                            false,
+                        let range = self.source.get_range(self.current, self.current + 2);
+
+                        self.error_at_token(
+                            self.get_current_loc(),
                             Diagnostic::unexpected_comment_terminator(),
-                            DiagnosticContextNote::comment_terminator_location(),
+                            DiagnosticContextNote::containing_operator_location(),
                         )
+                        .with_context_note(range, DiagnosticContextNote::comment_terminator_location())
                         .with_note(DiagnosticNote::comment_terminator_in_operator())
-                        .record()
+                        .record();
+
+                        self.advance_by(2).unwrap();
+                        continue;
                     }
                 }
                 _ => {}
@@ -476,7 +479,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         while depth > 0 {
             let Some(c) = self.advance() else {
                 return self
-                    .error(
+                    .error_at_end(
                         Diagnostic::unterminated_comment(),
                         DiagnosticContextNote::comment_location(),
                     )
@@ -700,6 +703,301 @@ pub(crate) mod test {
             Err(diagnostics.into_consumer().into_reports())
         } else {
             Ok(tokens)
+        }
+    }
+
+    macro_rules! assert_token {
+        (@internal $tokens:ident, $index:literal, $kind:pat_param, $start:literal, $end:expr $(, $text:literal)?) => {
+            let token = &$tokens[$index];
+            std::assert_matches::assert_matches!(
+                token.kind,
+                $kind,
+                concat!("Kind of token at index ", $index, " does not match")
+            );
+            assert_eq!(
+                token.source_range.start,
+                $start,
+                concat!("Token at index ", $index, " does not start at the correct offset")
+            );
+            assert_eq!(
+                token.source_range.end,
+                $end,
+                concat!("Token at index ", $index, " does not end at the correct offset")
+            );
+            $(
+                assert_eq!(
+                    token.source_range.get_str(),
+                    $text,
+                    concat!("Token at index ", $index, " does not have the correct text")
+                );
+            )?
+        };
+        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal..$end:literal $(, $text:literal)? $(;)?) => {
+            $crate::parser::lexer::test::assert_token!(@internal $tokens, $index, $kind, $start, $end $(, $text)?);
+        };
+        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal, $text:literal $(;)?) => {
+            $crate::parser::lexer::test::assert_token!(
+                @internal $tokens, $index, $kind, $start, $start + $text.len(), $text
+            );
+        };
+        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal $(;)?) => {
+            $crate::parser::lexer::test::assert_token!(@internal $tokens, $index, $kind, $start, $start + 1);
+        };
+    }
+
+    macro_rules! assert_tokens {
+        (
+            $tokens:ident;
+            $(
+                [$index:literal] => $kind:pat_param, $start:literal $(..$end:literal)? $(, $text:literal)?;
+            )*
+        ) => {
+            $(
+                $crate::parser::lexer::test::assert_token!($tokens[$index] => $kind, $start $(..$end)? $(, $text)?);
+            )*
+        };
+    }
+
+    macro_rules! assert_all_tokens {
+        ($tokens:ident; $($kind:pat_param, $start:literal $(..$end:literal)? $(, $text:literal)?;)*) => {
+            assert_eq!($tokens.len(), ${count($kind)});
+            $crate::parser::lexer::test::assert_tokens!(
+                $tokens;
+                $(
+                    [${index()}] => $kind, $start $(..$end)? $(, $text)?;
+                )*
+            );
+        };
+    }
+
+    pub(crate) use assert_all_tokens;
+    pub(crate) use assert_token;
+    pub(crate) use assert_tokens;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::assert_matches::assert_matches;
+
+    use super::{
+        test::{assert_all_tokens, run_lexer},
+        KeywordKind::*,
+        PunctuationKind::*,
+        TokenKind::*,
+    };
+    use crate::{
+        diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
+        source_manager::test::SourceManager,
+    };
+
+    #[test]
+    fn test_keyword() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("else if let var while foo letter");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Keyword(Else), 0..4;
+            Keyword(If), 5..7;
+            Keyword(Let), 8..11;
+            Keyword(Var), 12..15;
+            Keyword(While), 16..21;
+            Identifier, 22, "foo";
+            Identifier, 26, "letter";
+        );
+    }
+
+    #[test]
+    fn test_punctuation() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("` ( ) [ ] { } , : ; @ ? . = => -> & &w # \n");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Punctuation(Backtick), 0;
+            Punctuation(LeftParen), 2;
+            Punctuation(RightParen), 4;
+            Punctuation(LeftBracket), 6;
+            Punctuation(RightBracket), 8;
+            Punctuation(LeftBrace), 10;
+            Punctuation(RightBrace), 12;
+            Punctuation(Comma), 14;
+            Punctuation(Colon), 16;
+            Punctuation(Semicolon), 18;
+            Punctuation(At), 20;
+            Punctuation(QuestionMark), 22;
+            Punctuation(Dot), 24;
+            Punctuation(Equals), 26;
+            Punctuation(FatArrow), 28..30;
+            Punctuation(Arrow), 31..33;
+            Punctuation(Ampersand), 34;
+            Punctuation(AmpersandW), 36..38;
+            Punctuation(NumberSign), 39;
+            Punctuation(Newline), 41;
+        );
+    }
+
+    #[test]
+    fn test_operator() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("+ - . .. ./. +. ^*^ -hello");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Operator, 0, "+";
+            Operator, 2, "-";
+            Punctuation(Dot), 4;
+            Operator, 6, "..";
+            Operator, 9, "./.";
+            Operator, 13, "+";
+            Punctuation(Dot), 14;
+            Operator, 16, "^*^";
+            Operator, 20, "-";
+            Identifier, 21, "hello";
+        );
+    }
+
+    #[test]
+    fn test_comment() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new(
+            "
+            a + b // This is a comment
+            c /* This is a
+            multiline comment */ d
+            e /* This is a /* nested */ comment */ f
+            g +// This is a comment directly after an operator
+            h -/* This is a comment directly after an operator */
+            ",
+        );
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Punctuation(Newline), 0;
+            Identifier, 13, "a";
+            Operator, 15, "+";
+            Identifier, 17, "b";
+            Punctuation(Newline), 39;
+            Identifier, 52, "c";
+            Identifier, 100, "d";
+            Punctuation(Newline), 101;
+            Identifier, 114, "e";
+            Identifier, 153, "f";
+            Punctuation(Newline), 154;
+            Identifier, 167, "g";
+            Operator, 169, "+";
+            Punctuation(Newline), 217;
+            Identifier, 230, "h";
+            Operator, 232, "-";
+            Punctuation(Newline), 283;
+        );
+    }
+
+    #[test]
+    fn test_comment_error() {
+        static SOURCE_MANAGER: SourceManager =
+            SourceManager::new("*/ ./.*/. /* /*This is an unterminated (nested) comment */\n");
+
+        let reports = run_lexer(&SOURCE_MANAGER).unwrap_err();
+
+        assert_eq!(reports.len(), 3);
+
+        // Unexpected comment terminator
+        let report = &reports[0];
+        assert_eq!(report.source_loc.offset, 0);
+        assert_matches!(report.diagnostic, Diagnostic::UnexpectedCommentTerminator);
+
+        assert_eq!(report.context_notes.len(), 1);
+
+        let (range, note) = &report.context_notes[0];
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 2);
+        assert_matches!(note, DiagnosticContextNote::CommentTerminatorLocation);
+
+        assert!(report.note.is_none());
+
+        // Unexpected comment terminator in operator
+        let report = &reports[1];
+        assert_eq!(report.source_loc.offset, 6);
+        assert_matches!(report.diagnostic, Diagnostic::UnexpectedCommentTerminator);
+
+        assert_eq!(report.context_notes.len(), 2);
+
+        let (range, note) = &report.context_notes[0];
+        assert_eq!(range.start, 6);
+        assert_eq!(range.end, 8);
+        assert_matches!(note, DiagnosticContextNote::CommentTerminatorLocation);
+
+        let (range, note) = &report.context_notes[1];
+        assert_eq!(range.start, 3);
+        assert_eq!(range.end, 9);
+        assert_matches!(note, DiagnosticContextNote::ContainingOperatorLocation);
+
+        let note = report.note.as_ref().unwrap();
+        assert_matches!(note, DiagnosticNote::CommentTerminatorInOperator);
+
+        // Unterminated comment
+        let report = &reports[2];
+        assert_eq!(report.source_loc.offset, 58);
+        assert_matches!(report.diagnostic, Diagnostic::UnterminatedComment);
+
+        assert_eq!(report.context_notes.len(), 1);
+
+        let (range, note) = &report.context_notes[0];
+        assert_eq!(range.start, 10);
+        assert_eq!(range.end, 59);
+        assert_matches!(note, DiagnosticContextNote::CommentLocation);
+
+        let note = report.note.as_ref().unwrap();
+        assert_matches!(note, DiagnosticNote::MissingBlockCommentEnd);
+    }
+
+    #[test]
+    fn test_invalid_character() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("π");
+
+        let reports = run_lexer(&SOURCE_MANAGER).unwrap_err();
+
+        assert_eq!(reports.len(), 1);
+
+        let report = &reports[0];
+        assert_eq!(report.source_loc.offset, 0);
+        assert_matches!(report.diagnostic, Diagnostic::InvalidCharacter { .. });
+
+        assert_eq!(report.context_notes.len(), 1);
+
+        let (range, note) = &report.context_notes[0];
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, 2); // `π` is two bytes long
+        assert_matches!(note, DiagnosticContextNote::InvalidCharacterLocation);
+
+        assert!(report.note.is_none());
+    }
+
+    #[test]
+    fn test_invalid_characters() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("π\nπ\nπ\nπ");
+
+        let reports = run_lexer(&SOURCE_MANAGER).unwrap_err();
+
+        assert_eq!(reports.len(), 4);
+
+        for (i, report) in reports.iter().enumerate() {
+            assert_eq!(report.source_loc.offset, i * 3);
+            assert_matches!(report.diagnostic, Diagnostic::InvalidCharacter { .. });
+
+            assert_eq!(report.context_notes.len(), 1);
+
+            let (range, note) = &report.context_notes[0];
+            assert_eq!(range.start, i * 3);
+            assert_eq!(range.end, i * 3 + 2); // `π` is two bytes long
+            assert_matches!(note, DiagnosticContextNote::InvalidCharacterLocation);
+
+            assert!(report.note.is_none());
         }
     }
 }

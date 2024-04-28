@@ -5,7 +5,13 @@ use crate::source_manager::SourceManager;
 
 string_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum KeywordKind {}
+    pub enum KeywordKind {
+        Else = "else",
+        If = "if",
+        Let = "let",
+        Var = "var",
+        While = "while",
+    }
 }
 
 string_enum! {
