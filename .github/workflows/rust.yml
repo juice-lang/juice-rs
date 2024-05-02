@@ -24,7 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
-      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - uses: r7kamura/rust-problem-matchers@v1.5.0
       - uses: Swatinem/rust-cache@v2.7.3
         with:
           shared-key: ${{ needs.get_toolchain.outputs.toolchain }}-cache
@@ -64,7 +64,7 @@ jobs:
         with:
           toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
           components: clippy
-      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - uses: r7kamura/rust-problem-matchers@v1.5.0
       - uses: Swatinem/rust-cache@v2.7.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -80,7 +80,7 @@ jobs:
         with:
           toolchain: ${{ needs.get_toolchain.outputs.toolchain }}
           components: rustfmt
-      - uses: r7kamura/rust-problem-matchers@v1.4.0
+      - uses: r7kamura/rust-problem-matchers@v1.5.0
       - name: Check formatting
         run: cargo fmt -- --check
   ensure-lockfile-uptodate:

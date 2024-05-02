@@ -1,6 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use juice_core::{CharExt, OptionExt};
+use juice_core::CharExt;
 use num_bigint::BigUint;
 
 use super::{Lexer, Token};
@@ -919,7 +919,7 @@ mod tests {
     use crate::{
         diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
         parser::lexer::{
-            test::{assert_all_reports, assert_all_tokens, assert_reports, run_lexer},
+            test::{assert_all_reports, assert_all_tokens, run_lexer},
             token_kind::{PunctuationKind::*, TokenKind::*},
         },
         source_manager::test::SourceManager,

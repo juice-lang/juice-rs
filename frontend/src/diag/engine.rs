@@ -4,7 +4,6 @@ use super::{DefaultDiagnosticConsumer, Diagnostic, DiagnosticConsumer, Diagnosti
 use crate::{
     source_loc::{SourceLoc, SourceRange},
     source_manager::{DefaultSourceManager, SourceManager},
-    Result,
 };
 
 pub struct Engine<'a, M, C> {

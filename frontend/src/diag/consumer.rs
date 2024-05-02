@@ -24,9 +24,9 @@ pub trait Consumer<'a, M: SourceManager>: Sized {
 pub struct DefaultConsumer;
 
 impl DefaultConsumer {
-    fn build_ariadne_report<'a, 'b, M: AriadneSourceManager>(
+    fn build_ariadne_report<'a, M: AriadneSourceManager>(
         &self,
-        report: DiagnosticReport<'a, 'b, M, Self>,
+        report: DiagnosticReport<'a, '_, M, Self>,
     ) -> Report<'a, SourceRange<'a, M>> {
         let DiagnosticReport {
             source_loc,
