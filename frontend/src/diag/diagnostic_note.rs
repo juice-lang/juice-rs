@@ -10,6 +10,7 @@ diagnostic_note!(
         LineStartLocation => "Line starts here",
         IndentationLocation => "Should match indentation here",
         InterpolationLocation => "In this interpolation",
+        InterpolationStartLocation => "Interpolation starts here",
         CommentLocation => "Comment is here",
         CommentTerminatorLocation => "Comment terminator is here",
         ContainingOperatorLocation => "In this operator",

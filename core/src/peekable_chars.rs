@@ -14,6 +14,11 @@ impl<'a> PeekableChars<'a> {
         chars.next()
     }
 
+    pub fn peek_n(&self, n: usize) -> Option<char> {
+        let mut chars = self.0.clone();
+        chars.nth(n)
+    }
+
     pub fn peek_first_after(&self, func: impl Fn(char) -> bool) -> Option<char> {
         let mut chars = self.0.clone();
         let peek = loop {

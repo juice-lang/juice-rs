@@ -23,8 +23,8 @@ diagnostic!(
             "Invalid Unicode scalar value `{}` in {} literal",
         [error] InvalidEscapeSequence(c: into Colored<char>, literal_name: &'static str) =>
             "Invalid escape sequence `{}` in {} literal",
-        [error] ExpectedUnicodeEscapeBrace(c: into Colored<char> = '{', literal_name: &'static str) =>
-            "Expected `{}` to start Unicode escape in {} literal",
+        [error] ExpectedUnicodeEscapeBrace(c: into Colored<char>, purpose: &'static str, literal_name: &'static str) =>
+            "Expected `{}` to {} Unicode escape in {} literal",
         [error] InvalidUnicodeEscapeDigit(c: into Colored<char>, literal_name: &'static str) =>
             "Invalid Unicode escape digit `{}` in {} literal",
         [error] MissingUnicodeEscape(literal_name: &'static str) => "Missing Unicode escape sequence in {} literal",

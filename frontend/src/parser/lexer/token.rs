@@ -28,6 +28,22 @@ impl<'a, M: SourceManager> Token<'a, M> {
             has_trailing_whitespace,
         }
     }
+
+    pub fn is_surrounded_by_whitespace(&self) -> bool {
+        self.has_leading_whitespace || self.has_trailing_whitespace
+    }
+
+    pub fn has_no_whitespace(&self) -> bool {
+        !self.has_leading_whitespace && !self.has_trailing_whitespace
+    }
+
+    pub fn has_only_leading_whitespace(&self) -> bool {
+        self.has_leading_whitespace && !self.has_trailing_whitespace
+    }
+
+    pub fn has_only_trailing_whitespace(&self) -> bool {
+        !self.has_leading_whitespace && self.has_trailing_whitespace
+    }
 }
 
 impl<M: SourceManager> Debug for Token<'_, M> {

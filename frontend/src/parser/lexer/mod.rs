@@ -161,6 +161,7 @@ pub struct Lexer<'a, M: SourceManager> {
     current: usize,
     leading_whitespace_start: usize,
     last_considered_leading_whitespace: bool,
+    last_was_dot: bool,
     in_interpolation: bool,
     brace_depth: isize,
     errors: Vec<Error<'a, M>>,
@@ -177,6 +178,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
             current: 0,
             leading_whitespace_start: 0,
             last_considered_leading_whitespace: true,
+            last_was_dot: false,
             in_interpolation: false,
             brace_depth: 0,
             errors: Vec::new(),
@@ -212,10 +214,20 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         self.brace_depth = outer_brace_depth;
 
         self.expect_char_eq('}', |l| {
-            l.errors.push(Error {
-                source_loc: l.get_current_loc(),
+            let source_loc = if l.is_at_end() {
+                l.get_current_loc() - 1
+            } else {
+                l.get_current_loc()
+            };
+
+            outer_pending_errors.push(PendingError {
+                source_loc,
                 diagnostic: Diagnostic::expected_interpolation_end(),
-                context_notes: Vec::new(),
+                initial_context_note: DiagnosticContextNote::containing_literal_location(),
+                context_notes: vec![(
+                    l.source.get_range(interpolation_start, interpolation_start + 2),
+                    DiagnosticContextNote::interpolation_start_location(),
+                )],
                 note: None,
             });
         });
@@ -300,7 +312,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
             '\n' => {
                 if self.in_interpolation {
                     self.errors.push(Error {
-                        source_loc: self.get_current_loc(),
+                        source_loc: self.get_current_loc() - 1,
                         diagnostic: Diagnostic::newline_in_interpolation(),
                         context_notes: Vec::new(),
                         note: Some(DiagnosticNote::newline_in_interpolation()),
@@ -487,9 +499,9 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
                     .record();
             };
 
-            if c == '\n' && self.in_interpolation {
+            if self.in_interpolation && c == '\n' {
                 self.errors.push(Error {
-                    source_loc: self.get_current_loc(),
+                    source_loc: self.get_current_loc() - 1,
                     diagnostic: Diagnostic::newline_in_interpolation(),
                     context_notes: Vec::new(),
                     note: Some(DiagnosticNote::newline_in_interpolation()),
@@ -530,6 +542,10 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
 
         if let Some(c) = current_range.get_str().chars().last() {
             self.last_considered_leading_whitespace = c.is_leading_whitespace();
+        }
+
+        if matches!(kind, TokenKind::Punctuation(PunctuationKind::Dot)) {
+            self.last_was_dot = true;
         }
 
         Token::new(
@@ -660,6 +676,14 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
     fn peek2(&self) -> Option<char> {
         self.chars.peek2()
     }
+
+    fn peek_n(&self, n: usize) -> Option<char> {
+        self.chars.peek_n(n)
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.peek().is_none()
+    }
 }
 
 impl<'a, M: SourceManager> Iterator for Lexer<'a, M> {
@@ -707,41 +731,74 @@ pub(crate) mod test {
     }
 
     macro_rules! assert_token {
-        (@internal $tokens:ident, $index:literal, $kind:pat_param, $start:literal, $end:expr $(, $text:literal)?) => {
+        (
+            @internal $tokens:ident,
+            $index:literal,
+            $($kind:pat_param)|+ $(if $guard:expr)?,
+            $start:literal,
+            $end:expr
+            $(, $text:literal)?
+            $(=> $test:expr)?
+        ) => {
             let token = &$tokens[$index];
             std::assert_matches::assert_matches!(
-                token.kind,
-                $kind,
-                concat!("Kind of token at index ", $index, " does not match")
+                &token.kind,
+                $($kind)|+ $(if $guard)?,
+                concat!("Kind of token #", $index, " does not match")
             );
             assert_eq!(
                 token.source_range.start,
                 $start,
-                concat!("Token at index ", $index, " does not start at the correct offset")
+                concat!("Token #", $index, " does not start at the correct location")
             );
             assert_eq!(
                 token.source_range.end,
                 $end,
-                concat!("Token at index ", $index, " does not end at the correct offset")
+                concat!("Token #", $index, " does not end at the correct location")
             );
             $(
                 assert_eq!(
                     token.source_range.get_str(),
                     $text,
-                    concat!("Token at index ", $index, " does not have the correct text")
+                    concat!("Token #", $index, " does not have the correct text")
+                );
+            )?
+            $(
+                let test: fn(
+                        &$crate::parser::lexer::Token<'static, $crate::source_manager::test::SourceManager>
+                    ) -> bool = $test;
+                assert!(
+                    test(&token),
+                    concat!("Token #", $index, " does not pass the custom test function (", stringify!($test), ")")
                 );
             )?
         };
-        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal..$end:literal $(, $text:literal)? $(;)?) => {
-            $crate::parser::lexer::test::assert_token!(@internal $tokens, $index, $kind, $start, $end $(, $text)?);
-        };
-        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal, $text:literal $(;)?) => {
+        (
+            $tokens:ident [$index:literal] =>
+                $($kind:pat_param)|+ $(if $guard:expr)?,
+                $start:literal..$end:literal
+                $(, $text:literal)?
+                $(=> $test:expr)?
+        ) => {
             $crate::parser::lexer::test::assert_token!(
-                @internal $tokens, $index, $kind, $start, $start + $text.len(), $text
+                @internal $tokens, $index, $($kind)|+ $(if $guard)?, $start, $end $(, $text)? $(=> $test)?
             );
         };
-        ($tokens:ident [$index:literal] => $kind:pat_param, $start:literal $(;)?) => {
-            $crate::parser::lexer::test::assert_token!(@internal $tokens, $index, $kind, $start, $start + 1);
+        (
+            $tokens:ident [$index:literal] =>
+                $($kind:pat_param)|+ $(if $guard:expr)?, $start:literal, $text:literal $(=> $test:expr)?
+        ) => {
+            $crate::parser::lexer::test::assert_token!(
+                @internal $tokens, $index, $($kind)|+ $(if $guard)?, $start, $start + $text.len(), $text $(=> $test)?
+            );
+        };
+        (
+            $tokens:ident [$index:literal] =>
+                $($kind:pat_param)|+ $(if $guard:expr)?, $start:literal $(=> $test:expr)?
+        ) => {
+            $crate::parser::lexer::test::assert_token!(
+                @internal $tokens, $index, $($kind)|+ $(if $guard)?, $start, $start + 1 $(=> $test)?
+            );
         };
     }
 
@@ -749,28 +806,163 @@ pub(crate) mod test {
         (
             $tokens:ident;
             $(
-                [$index:literal] => $kind:pat_param, $start:literal $(..$end:literal)? $(, $text:literal)?;
+                [$index:literal] =>
+                    $($kind:pat_param)|+ $(if $guard:expr)?,
+                    $start:literal $(..$end:literal)?
+                    $(, $text:literal)?
+                    $(=> $test:expr)?;
             )*
         ) => {
             $(
-                $crate::parser::lexer::test::assert_token!($tokens[$index] => $kind, $start $(..$end)? $(, $text)?);
+                $crate::parser::lexer::test::assert_token!(
+                    $tokens[$index] => $($kind)|+ $(if $guard)?, $start $(..$end)? $(, $text)? $(=> $test)?
+                );
             )*
         };
     }
 
     macro_rules! assert_all_tokens {
-        ($tokens:ident; $($kind:pat_param, $start:literal $(..$end:literal)? $(, $text:literal)?;)*) => {
-            assert_eq!($tokens.len(), ${count($kind)});
+        (
+            $tokens:ident;
+            $(
+                $($kind:pat_param)|+ $(if $guard:expr)?,
+                $start:literal $(..$end:literal)?
+                $(, $text:literal)?
+                $(=> $test:expr)?;
+            )*
+        ) => {
+            assert_eq!($tokens.len(), ${count($start)}, "Number of tokens does not match");
             $crate::parser::lexer::test::assert_tokens!(
                 $tokens;
                 $(
-                    [${index()}] => $kind, $start $(..$end)? $(, $text)?;
+                    [${index()}] => $($kind)|+ $(if $guard)?, $start $(..$end)? $(, $text)? $(=> $test)?;
                 )*
             );
         };
     }
 
+    macro_rules! assert_report {
+        (@internal_note $report:expr, $index:literal, $($note:pat_param)|+ $(if $guard:expr)? $(,)?) => {
+            let note = $report.note.as_ref().unwrap();
+            std::assert_matches::assert_matches!(
+                note,
+                $($note)|+ $(if $guard)?,
+                concat!("Note of report #", $index, " does not match")
+            );
+        };
+        (@internal_note $report:expr, $index:literal, $(,)?) => {
+            assert!(
+                $report.note.is_none(),
+                concat!("Report #", $index, " has an unexpected note")
+            );
+        };
+        (
+            $reports:ident [$index:literal] => $($diagnostic:pat_param)|+ $(if $guard:expr)?, $loc:literal
+                $(, <$($context_note:pat_param)|+ $(if $context_guard:expr)?, $start:literal..$end:literal>)+
+                $(, ($($note:pat_param)|+ $(if $note_guard:expr)?))?
+        ) => {
+            let report = &$reports[$index];
+            std::assert_matches::assert_matches!(
+                report.diagnostic,
+                $($diagnostic)|+ $(if $guard)?,
+                concat!("Report #", $index, " does not match")
+            );
+            assert_eq!(
+                report.source_loc.offset,
+                $loc,
+                concat!("Report #", $index, " does not have the correct location")
+            );
+
+            assert_eq!(
+                report.context_notes.len(),
+                ${count($start)},
+                concat!("Report #", $index, " does not have the correct number of context notes")
+            );
+
+            $(
+                let (range, note) = &report.context_notes[${index()}];
+                std::assert_matches::assert_matches!(
+                    note,
+                    $($context_note)|+ $(if $context_guard)?,
+                    concat!("Context note #", ${index()}, " of report #", $index, " does not match")
+                );
+
+                assert_eq!(
+                    range.start,
+                    $start,
+                    concat!(
+                        "Context note #",
+                        ${index()},
+                        " of report #",
+                        $index,
+                        " does not start at the correct location"
+                    )
+                );
+
+                assert_eq!(
+                    range.end,
+                    $end,
+                    concat!(
+                        "Context note #",
+                        ${index()},
+                        " of report #",
+                        $index,
+                        " does not end at the correct location"
+                    )
+                );
+            )+
+
+            $crate::parser::lexer::test::assert_report!(
+                @internal_note report, $index,
+                $($($note)|+ $(if $note_guard)?)?
+            );
+        };
+    }
+
+    macro_rules! assert_reports {
+        (
+            $reports:ident;
+            $(
+                [$index:literal] => $($diagnostic:pat_param)|+ $(if $guard:expr)?, $loc:literal
+                    $(, <$($context_note:pat_param)|+ $(if $context_guard:expr)?, $start:literal..$end:literal>)+
+                    $(, ($($note:pat_param)|+ $(if $note_guard:expr)?))?;
+            )*
+        ) => {
+            $(
+                $crate::parser::lexer::test::assert_report!(
+                    $reports[$index] => $($diagnostic)|+ $(if $guard)?, $loc
+                        $(, <$($context_note)|+ $(if $context_guard)?, $start..$end>)+
+                        $(, ($($note)|+ $(if $note_guard)?))?
+                );
+            )*
+        };
+    }
+
+    macro_rules! assert_all_reports {
+        (
+            $reports:ident;
+            $(
+                $($diagnostic:pat_param)|+ $(if $guard:expr)?, $loc:literal
+                    $(, <$($context_note:pat_param)|+ $(if $context_guard:expr)?, $start:literal..$end:literal>)+
+                    $(, ($($note:pat_param)|+ $(if $note_guard:expr)?))?;
+            )*
+        ) => {
+            assert_eq!($reports.len(), ${count($loc)}, "Number of reports does not match");
+            $crate::parser::lexer::test::assert_reports!(
+                $reports;
+                $(
+                    [${index()}] => $($diagnostic)|+ $(if $guard)?, $loc
+                        $(, <$($context_note)|+ $(if $context_guard)?, $start..$end>)+
+                        $(, ($($note)|+ $(if $note_guard)?))?;
+                )*
+            );
+        };
+    }
+
+    pub(crate) use assert_all_reports;
     pub(crate) use assert_all_tokens;
+    pub(crate) use assert_report;
+    pub(crate) use assert_reports;
     pub(crate) use assert_token;
     pub(crate) use assert_tokens;
 }
@@ -787,6 +979,7 @@ mod tests {
     };
     use crate::{
         diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
+        parser::lexer::{test::assert_all_reports, Token},
         source_manager::test::SourceManager,
     };
 
@@ -898,62 +1091,47 @@ mod tests {
     }
 
     #[test]
+    fn test_whitespace() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("+a-b * c? +\n-d?");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Operator, 0, "+" => Token::has_only_leading_whitespace;
+            Identifier, 1, "a";
+            Operator, 2, "-" => Token::has_no_whitespace;
+            Identifier, 3, "b";
+            Operator, 5, "*" => Token::is_surrounded_by_whitespace;
+            Identifier, 7, "c";
+            Punctuation(QuestionMark), 8 => Token::has_only_trailing_whitespace;
+            Operator, 10, "+" => Token::is_surrounded_by_whitespace;
+            Punctuation(Newline), 11;
+            Operator, 12, "-" => Token::has_only_leading_whitespace;
+            Identifier, 13, "d";
+            Punctuation(QuestionMark), 14 => Token::has_only_trailing_whitespace;
+        );
+    }
+
+    #[test]
     fn test_comment_error() {
         static SOURCE_MANAGER: SourceManager =
             SourceManager::new("*/ ./.*/. /* /*This is an unterminated (nested) comment */\n");
 
         let reports = run_lexer(&SOURCE_MANAGER).unwrap_err();
 
-        assert_eq!(reports.len(), 3);
-
-        // Unexpected comment terminator
-        let report = &reports[0];
-        assert_eq!(report.source_loc.offset, 0);
-        assert_matches!(report.diagnostic, Diagnostic::UnexpectedCommentTerminator);
-
-        assert_eq!(report.context_notes.len(), 1);
-
-        let (range, note) = &report.context_notes[0];
-        assert_eq!(range.start, 0);
-        assert_eq!(range.end, 2);
-        assert_matches!(note, DiagnosticContextNote::CommentTerminatorLocation);
-
-        assert!(report.note.is_none());
-
-        // Unexpected comment terminator in operator
-        let report = &reports[1];
-        assert_eq!(report.source_loc.offset, 6);
-        assert_matches!(report.diagnostic, Diagnostic::UnexpectedCommentTerminator);
-
-        assert_eq!(report.context_notes.len(), 2);
-
-        let (range, note) = &report.context_notes[0];
-        assert_eq!(range.start, 6);
-        assert_eq!(range.end, 8);
-        assert_matches!(note, DiagnosticContextNote::CommentTerminatorLocation);
-
-        let (range, note) = &report.context_notes[1];
-        assert_eq!(range.start, 3);
-        assert_eq!(range.end, 9);
-        assert_matches!(note, DiagnosticContextNote::ContainingOperatorLocation);
-
-        let note = report.note.as_ref().unwrap();
-        assert_matches!(note, DiagnosticNote::CommentTerminatorInOperator);
-
-        // Unterminated comment
-        let report = &reports[2];
-        assert_eq!(report.source_loc.offset, 58);
-        assert_matches!(report.diagnostic, Diagnostic::UnterminatedComment);
-
-        assert_eq!(report.context_notes.len(), 1);
-
-        let (range, note) = &report.context_notes[0];
-        assert_eq!(range.start, 10);
-        assert_eq!(range.end, 59);
-        assert_matches!(note, DiagnosticContextNote::CommentLocation);
-
-        let note = report.note.as_ref().unwrap();
-        assert_matches!(note, DiagnosticNote::MissingBlockCommentEnd);
+        assert_all_reports!(
+            reports;
+            Diagnostic::UnexpectedCommentTerminator, 0,
+                <DiagnosticContextNote::CommentTerminatorLocation, 0..2>;
+            Diagnostic::UnexpectedCommentTerminator, 6,
+                <DiagnosticContextNote::CommentTerminatorLocation, 6..8>,
+                <DiagnosticContextNote::ContainingOperatorLocation, 3..9>,
+                (DiagnosticNote::CommentTerminatorInOperator);
+            Diagnostic::UnterminatedComment, 58,
+                <DiagnosticContextNote::CommentLocation, 10..59>,
+                (DiagnosticNote::MissingBlockCommentEnd);
+        );
     }
 
     #[test]
@@ -962,20 +1140,11 @@ mod tests {
 
         let reports = run_lexer(&SOURCE_MANAGER).unwrap_err();
 
-        assert_eq!(reports.len(), 1);
-
-        let report = &reports[0];
-        assert_eq!(report.source_loc.offset, 0);
-        assert_matches!(report.diagnostic, Diagnostic::InvalidCharacter { .. });
-
-        assert_eq!(report.context_notes.len(), 1);
-
-        let (range, note) = &report.context_notes[0];
-        assert_eq!(range.start, 0);
-        assert_eq!(range.end, 2); // `π` is two bytes long
-        assert_matches!(note, DiagnosticContextNote::InvalidCharacterLocation);
-
-        assert!(report.note.is_none());
+        assert_all_reports!(
+            reports;
+            Diagnostic::InvalidCharacter { .. }, 0,
+                <DiagnosticContextNote::InvalidCharacterLocation, 0..2>; // `π` is two bytes long
+        );
     }
 
     #[test]
