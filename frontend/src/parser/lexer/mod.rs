@@ -19,15 +19,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Error<'a, M: SourceManager> {
-    source_loc: SourceLoc<'a, M>,
-    diagnostic: Diagnostic<'a>,
-    context_notes: Vec<(SourceRange<'a, M>, DiagnosticContextNote<'a>)>,
-    note: Option<DiagnosticNote<'a>>,
+pub struct Error<'src, M: SourceManager> {
+    source_loc: SourceLoc<'src, M>,
+    diagnostic: Diagnostic<'src>,
+    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
+    note: Option<DiagnosticNote<'src>>,
 }
 
-impl<'a, M: SourceManager> Error<'a, M> {
-    pub fn diagnose<C: DiagnosticConsumer<'a, M>>(self, diagnostics: &DiagnosticEngine<'a, M, C>) -> C::Output {
+impl<'src, M: SourceManager> Error<'src, M> {
+    pub fn diagnose<C: DiagnosticConsumer<'src, M>>(self, diagnostics: &DiagnosticEngine<'src, M, C>) -> C::Output {
         let mut report = diagnostics.report(self.source_loc, self.diagnostic);
 
         for (source_range, context_note) in self.context_notes {
@@ -43,34 +43,34 @@ impl<'a, M: SourceManager> Error<'a, M> {
 }
 
 #[derive(Debug, Clone)]
-struct PendingError<'a, M: SourceManager> {
-    source_loc: SourceLoc<'a, M>,
-    diagnostic: Diagnostic<'a>,
-    initial_context_note: DiagnosticContextNote<'a>,
-    context_notes: Vec<(SourceRange<'a, M>, DiagnosticContextNote<'a>)>,
-    note: Option<DiagnosticNote<'a>>,
+struct PendingError<'src, M: SourceManager> {
+    source_loc: SourceLoc<'src, M>,
+    diagnostic: Diagnostic<'src>,
+    initial_context_note: DiagnosticContextNote<'src>,
+    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
+    note: Option<DiagnosticNote<'src>>,
 }
 
 #[must_use = "Errors must be recorded to be diagnosed"]
-struct ErrorBuilder<'a, 'b, M: SourceManager>
+struct ErrorBuilder<'src, 'lex, M: SourceManager>
 where
-    'a: 'b,
+    'src: 'lex,
 {
-    source_loc: Result<(SourceRange<'a, M>, bool), SourceLoc<'a, M>>,
-    diagnostic: Diagnostic<'a>,
-    initial_context_note: DiagnosticContextNote<'a>,
-    context_notes: Vec<(SourceRange<'a, M>, DiagnosticContextNote<'a>)>,
-    note: Option<DiagnosticNote<'a>>,
-    lexer: &'b mut Lexer<'a, M>,
+    source_loc: Result<(SourceRange<'src, M>, bool), SourceLoc<'src, M>>,
+    diagnostic: Diagnostic<'src>,
+    initial_context_note: DiagnosticContextNote<'src>,
+    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
+    note: Option<DiagnosticNote<'src>>,
+    lexer: &'lex mut Lexer<'src, M>,
 }
 
-impl<'a, 'b, M: SourceManager> ErrorBuilder<'a, 'b, M> {
+impl<'src, 'lex, M: SourceManager> ErrorBuilder<'src, 'lex, M> {
     fn new_with_range(
-        source_range: SourceRange<'a, M>,
+        source_range: SourceRange<'src, M>,
         at_end: bool,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-        lexer: &'b mut Lexer<'a, M>,
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+        lexer: &'lex mut Lexer<'src, M>,
     ) -> Self {
         Self {
             source_loc: Ok((source_range, at_end)),
@@ -83,10 +83,10 @@ impl<'a, 'b, M: SourceManager> ErrorBuilder<'a, 'b, M> {
     }
 
     fn new_with_loc(
-        source_loc: SourceLoc<'a, M>,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-        lexer: &'b mut Lexer<'a, M>,
+        source_loc: SourceLoc<'src, M>,
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+        lexer: &'lex mut Lexer<'src, M>,
     ) -> Self {
         Self {
             source_loc: Err(source_loc),
@@ -98,12 +98,16 @@ impl<'a, 'b, M: SourceManager> ErrorBuilder<'a, 'b, M> {
         }
     }
 
-    fn with_context_note(mut self, source_range: SourceRange<'a, M>, context_note: DiagnosticContextNote<'a>) -> Self {
+    fn with_context_note(
+        mut self,
+        source_range: SourceRange<'src, M>,
+        context_note: DiagnosticContextNote<'src>,
+    ) -> Self {
         self.context_notes.push((source_range, context_note));
         self
     }
 
-    fn with_note(mut self, note: DiagnosticNote<'a>) -> Self {
+    fn with_note(mut self, note: DiagnosticNote<'src>) -> Self {
         self.note = Some(note);
         self
     }
@@ -154,9 +158,9 @@ impl<'a, 'b, M: SourceManager> ErrorBuilder<'a, 'b, M> {
 }
 
 #[derive(Debug)]
-pub struct Lexer<'a, M: SourceManager> {
-    source: Source<'a, M>,
-    chars: PeekableChars<'a>,
+pub struct Lexer<'src, M: SourceManager> {
+    source: Source<'src, M>,
+    chars: PeekableChars<'src>,
     start: usize,
     current: usize,
     leading_whitespace_start: usize,
@@ -164,12 +168,12 @@ pub struct Lexer<'a, M: SourceManager> {
     last_was_dot: bool,
     in_interpolation: bool,
     brace_depth: isize,
-    errors: Vec<Error<'a, M>>,
-    pending_errors: Vec<PendingError<'a, M>>,
+    errors: Vec<Error<'src, M>>,
+    pending_errors: Vec<PendingError<'src, M>>,
 }
 
-impl<'a, M: SourceManager> Lexer<'a, M> {
-    pub fn new(source: Source<'a, M>) -> Self {
+impl<'src, M: SourceManager> Lexer<'src, M> {
+    pub fn new(source: Source<'src, M>) -> Self {
         let chars = source.get_contents().into();
         Self {
             source,
@@ -259,9 +263,9 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         res
     }
 
-    pub fn diagnose_errors<C: DiagnosticConsumer<'a, M>>(
+    pub fn diagnose_errors<C: DiagnosticConsumer<'src, M>>(
         &mut self,
-        diagnostics: &DiagnosticEngine<'a, M, C>,
+        diagnostics: &DiagnosticEngine<'src, M, C>,
     ) -> C::Output {
         for error in self.errors.drain(..) {
             error.diagnose(diagnostics)?;
@@ -270,7 +274,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         C::Output::from_output(())
     }
 
-    fn next_token(&mut self) -> Option<Token<'a, M>> {
+    fn next_token(&mut self) -> Option<Token<'src, M>> {
         self.start = self.current;
         self.leading_whitespace_start = self.current;
 
@@ -307,7 +311,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         })
     }
 
-    fn next_token_impl(&mut self, c: char) -> Token<'a, M> {
+    fn next_token_impl(&mut self, c: char) -> Token<'src, M> {
         let token_kind = match c {
             '\n' => {
                 if self.in_interpolation {
@@ -419,7 +423,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         self.make_token(token_kind)
     }
 
-    fn consume_identifier(&mut self) -> TokenKind<'a, M> {
+    fn consume_identifier(&mut self) -> TokenKind<'src, M> {
         while self.match_char(CharExt::is_identifier_char) {}
 
         self.get_current_range()
@@ -428,7 +432,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
             .map_or(Tok![Ident], TokenKind::Keyword)
     }
 
-    fn consume_operator(&mut self, allow_dot: bool) -> TokenKind<'a, M> {
+    fn consume_operator(&mut self, allow_dot: bool) -> TokenKind<'src, M> {
         let func = if allow_dot {
             char::is_dot_operator
         } else {
@@ -470,15 +474,15 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         Tok![Op]
     }
 
-    fn consume_number_literal(&mut self, start: char) -> TokenKind<'a, M> {
+    fn consume_number_literal(&mut self, start: char) -> TokenKind<'src, M> {
         TokenKind::Literal(LiteralKind::lex_number(self, start))
     }
 
-    fn consume_char_literal(&mut self) -> TokenKind<'a, M> {
+    fn consume_char_literal(&mut self) -> TokenKind<'src, M> {
         TokenKind::Literal(LiteralKind::lex_char(self))
     }
 
-    fn consume_string_literal(&mut self, start: char) -> TokenKind<'a, M> {
+    fn consume_string_literal(&mut self, start: char) -> TokenKind<'src, M> {
         TokenKind::Literal(if start == '#' {
             LiteralKind::lex_raw_string(self)
         } else {
@@ -516,7 +520,7 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         }
     }
 
-    fn make_token(&mut self, kind: TokenKind<'a, M>) -> Token<'a, M> {
+    fn make_token(&mut self, kind: TokenKind<'src, M>) -> Token<'src, M> {
         let current_range = self.get_current_range();
 
         for pending in self.pending_errors.drain(..) {
@@ -557,58 +561,58 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
         )
     }
 
-    fn error<'b>(
-        &'b mut self,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-    ) -> ErrorBuilder<'a, 'b, M> {
+    fn error<'lex>(
+        &'lex mut self,
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+    ) -> ErrorBuilder<'src, 'lex, M> {
         self.error_with_range(self.get_current_range(), false, diagnostic, context_note)
     }
 
-    fn error_at_end<'b>(
-        &'b mut self,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-    ) -> ErrorBuilder<'a, 'b, M> {
+    fn error_at_end<'lex>(
+        &'lex mut self,
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+    ) -> ErrorBuilder<'src, 'lex, M> {
         self.error_with_range(self.get_current_range(), true, diagnostic, context_note)
     }
 
-    fn error_with_range<'b>(
-        &'b mut self,
-        source_range: SourceRange<'a, M>,
+    fn error_with_range<'lex>(
+        &'lex mut self,
+        source_range: SourceRange<'src, M>,
         at_end: bool,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-    ) -> ErrorBuilder<'a, 'b, M> {
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+    ) -> ErrorBuilder<'src, 'lex, M> {
         ErrorBuilder::new_with_range(source_range, at_end, diagnostic, context_note, self)
     }
 
-    fn error_at_token<'b>(
-        &'b mut self,
-        source_loc: SourceLoc<'a, M>,
-        diagnostic: Diagnostic<'a>,
-        context_note: DiagnosticContextNote<'a>,
-    ) -> ErrorBuilder<'a, 'b, M> {
+    fn error_at_token<'lex>(
+        &'lex mut self,
+        source_loc: SourceLoc<'src, M>,
+        diagnostic: Diagnostic<'src>,
+        context_note: DiagnosticContextNote<'src>,
+    ) -> ErrorBuilder<'src, 'lex, M> {
         ErrorBuilder::new_with_loc(source_loc, diagnostic, context_note, self)
     }
 
-    fn get_current_range(&self) -> SourceRange<'a, M> {
+    fn get_current_range(&self) -> SourceRange<'src, M> {
         self.source.get_range(self.start, self.current)
     }
 
-    fn get_current_character_range(&self, c: char) -> SourceRange<'a, M> {
+    fn get_current_character_range(&self, c: char) -> SourceRange<'src, M> {
         self.source.get_range(self.current - c.len_utf8(), self.current)
     }
 
-    fn get_next_character_range(&self, c: char) -> SourceRange<'a, M> {
+    fn get_next_character_range(&self, c: char) -> SourceRange<'src, M> {
         self.source.get_range(self.current, self.current + c.len_utf8())
     }
 
-    fn get_leading_whitespace_range(&self) -> SourceRange<'a, M> {
+    fn get_leading_whitespace_range(&self) -> SourceRange<'src, M> {
         self.source.get_range(self.leading_whitespace_start, self.start)
     }
 
-    fn get_current_loc(&self) -> SourceLoc<'a, M> {
+    fn get_current_loc(&self) -> SourceLoc<'src, M> {
         self.source.get_loc(self.current)
     }
 
@@ -686,8 +690,8 @@ impl<'a, M: SourceManager> Lexer<'a, M> {
     }
 }
 
-impl<'a, M: SourceManager> Iterator for Lexer<'a, M> {
-    type Item = Token<'a, M>;
+impl<'src, M: SourceManager> Iterator for Lexer<'src, M> {
+    type Item = Token<'src, M>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()

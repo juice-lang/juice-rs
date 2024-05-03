@@ -1,3 +1,3 @@
-mod lexer;
+pub mod lexer;
 
-pub use self::lexer::{Error as LexerError, Lexer};
+pub use self::lexer::Lexer;

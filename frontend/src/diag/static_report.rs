@@ -4,17 +4,17 @@ use juice_core::diag::ColorExt as _;
 use super::{DiagnosticNote, StaticDiagnostic};
 
 #[must_use = "report does nothing unless diagnosed"]
-pub struct StaticReport<'a> {
-    diagnostic: StaticDiagnostic<'a>,
-    note: Option<DiagnosticNote<'a>>,
+pub struct StaticReport<'src> {
+    diagnostic: StaticDiagnostic<'src>,
+    note: Option<DiagnosticNote<'src>>,
 }
 
-impl<'a> StaticReport<'a> {
-    pub fn new(diagnostic: StaticDiagnostic<'a>) -> Self {
+impl<'src> StaticReport<'src> {
+    pub fn new(diagnostic: StaticDiagnostic<'src>) -> Self {
         Self { diagnostic, note: None }
     }
 
-    pub fn with_note(mut self, note: DiagnosticNote<'a>) -> Self {
+    pub fn with_note(mut self, note: DiagnosticNote<'src>) -> Self {
         self.note = Some(note);
         self
     }

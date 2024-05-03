@@ -10,13 +10,13 @@ use crate::{
     Result,
 };
 
-pub trait Consumer<'a, M: SourceManager>: Sized {
+pub trait Consumer<'src, M: SourceManager>: Sized {
     type Output: Try<Output = ()>;
 
-    fn consume<'b>(
+    fn consume<'diag>(
         &self,
-        report: DiagnosticReport<'a, 'b, M, Self>,
-        engine: &'b DiagnosticEngine<'a, M, Self>,
+        report: DiagnosticReport<'src, 'diag, M, Self>,
+        engine: &'diag DiagnosticEngine<'src, M, Self>,
     ) -> Self::Output;
 }
 
@@ -24,10 +24,10 @@ pub trait Consumer<'a, M: SourceManager>: Sized {
 pub struct DefaultConsumer;
 
 impl DefaultConsumer {
-    fn build_ariadne_report<'a, M: AriadneSourceManager>(
+    fn build_ariadne_report<'src, M: AriadneSourceManager>(
         &self,
-        report: DiagnosticReport<'a, '_, M, Self>,
-    ) -> Report<'a, SourceRange<'a, M>> {
+        report: DiagnosticReport<'src, '_, M, Self>,
+    ) -> Report<'src, SourceRange<'src, M>> {
         let DiagnosticReport {
             source_loc,
             diagnostic,
@@ -63,13 +63,13 @@ impl DefaultConsumer {
     }
 }
 
-impl<'a, M: AriadneSourceManager> Consumer<'a, M> for DefaultConsumer {
+impl<'src, M: AriadneSourceManager> Consumer<'src, M> for DefaultConsumer {
     type Output = Result<()>;
 
-    fn consume<'b>(
+    fn consume<'diag>(
         &self,
-        report: DiagnosticReport<'a, 'b, M, Self>,
-        engine: &'b DiagnosticEngine<'a, M, Self>,
+        report: DiagnosticReport<'src, 'diag, M, Self>,
+        engine: &'diag DiagnosticEngine<'src, M, Self>,
     ) -> Result<()> {
         self.build_ariadne_report(report)
             .eprint(engine.get_source_manager().get_cache())
@@ -108,10 +108,10 @@ pub(crate) mod test {
     impl super::Consumer<'static, TestSourceManager> for Consumer {
         type Output = Unit;
 
-        fn consume<'a>(
+        fn consume<'diag>(
             &self,
-            report: DiagnosticReport<'static, 'a, TestSourceManager, Self>,
-            _: &'a DiagnosticEngine<'static, TestSourceManager, Self>,
+            report: DiagnosticReport<'static, 'diag, TestSourceManager, Self>,
+            _: &'diag DiagnosticEngine<'static, TestSourceManager, Self>,
         ) -> Unit {
             self.reports
                 .lock()

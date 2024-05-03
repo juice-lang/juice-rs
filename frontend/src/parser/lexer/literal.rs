@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use derive_where::derive_where;
 use juice_core::CharExt;
 use num_bigint::BigUint;
 
@@ -65,28 +66,28 @@ impl Radix {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum InterpolationPart<'a, M: SourceManager> {
+#[derive_where(Debug, Clone)]
+pub enum InterpolationPart<'src, M: SourceManager> {
     String(Arc<str>),
-    Interpolation(Vec<Token<'a, M>>),
+    Interpolation(Vec<Token<'src, M>>),
 }
 
-#[derive(Debug, Clone)]
-pub enum LiteralKind<'a, M: SourceManager> {
+#[derive_where(Debug, Clone)]
+pub enum LiteralKind<'src, M: SourceManager> {
     Int(u64, Radix),
     BigInt(Vec<u64>, Radix),
     Float(f64),
     Char(char),
     String(Arc<str>),
-    StringInterpolation(Vec<InterpolationPart<'a, M>>),
+    StringInterpolation(Vec<InterpolationPart<'src, M>>),
     InvalidInt,
     InvalidFloat,
     InvalidChar,
     InvalidString,
 }
 
-impl<'a, M: SourceManager> LiteralKind<'a, M> {
-    pub fn lex_number(lexer: &mut Lexer<'a, M>, start: char) -> Self {
+impl<'src, M: SourceManager> LiteralKind<'src, M> {
+    pub fn lex_number(lexer: &mut Lexer<'src, M>, start: char) -> Self {
         let (radix, mut is_first) = (start == '0')
             .then(|| lexer.match_char_map(Radix::from_prefix))
             .flatten()
@@ -250,7 +251,7 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
         Self::Float(float)
     }
 
-    pub fn lex_char(lexer: &mut Lexer<'a, M>) -> Self {
+    pub fn lex_char(lexer: &mut Lexer<'src, M>) -> Self {
         let start_loc = lexer.get_current_loc() - 1;
 
         let terminator = Cow::Borrowed("'");
@@ -386,7 +387,7 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
         }
     }
 
-    pub fn lex_string(lexer: &mut Lexer<'a, M>) -> Self {
+    pub fn lex_string(lexer: &mut Lexer<'src, M>) -> Self {
         let start_loc = lexer.get_current_loc() - 1;
 
         let is_multiline = lexer.match_str(r#""""#); // One quote is already consumed by the lexer
@@ -395,7 +396,7 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
         Self::lex_string_impl(lexer, start_loc, terminator, None, is_multiline, false, "string")
     }
 
-    pub fn lex_raw_string(lexer: &mut Lexer<'a, M>) -> Self {
+    pub fn lex_raw_string(lexer: &mut Lexer<'src, M>) -> Self {
         let start_loc = lexer.get_current_loc() - 1;
         let mut raw_level = 1;
 
@@ -427,20 +428,20 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
     }
 
     fn lex_string_impl(
-        lexer: &mut Lexer<'a, M>,
-        start_loc: SourceLoc<'a, M>,
+        lexer: &mut Lexer<'src, M>,
+        start_loc: SourceLoc<'src, M>,
         terminator: Cow<'static, str>,
         raw_level: Option<usize>,
         is_multiline: bool,
         recovering_character: bool,
         literal_name: &'static str,
     ) -> Self {
-        enum Part<'a, M: SourceManager> {
+        enum Part<'src, M: SourceManager> {
             String {
                 content: String,
-                newline_locations: Vec<(usize, SourceLoc<'a, M>)>,
+                newline_locations: Vec<(usize, SourceLoc<'src, M>)>,
             },
-            Interpolation(Vec<Token<'a, M>>),
+            Interpolation(Vec<Token<'src, M>>),
         }
 
         if is_multiline && lexer.in_interpolation {
@@ -687,10 +688,10 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
     }
 
     fn remove_multiline_indentation(
-        lexer: &mut Lexer<'a, M>,
+        lexer: &mut Lexer<'src, M>,
         mut string: String,
-        newline_locations: Vec<(usize, SourceLoc<'a, M>)>,
-        indentation: SourceRange<'a, M>,
+        newline_locations: Vec<(usize, SourceLoc<'src, M>)>,
+        indentation: SourceRange<'src, M>,
         is_first: bool,
         is_last: bool,
     ) -> Arc<str> {
@@ -738,7 +739,7 @@ impl<'a, M: SourceManager> LiteralKind<'a, M> {
     }
 
     fn consume_escape_sequence(
-        lexer: &mut Lexer<'a, M>,
+        lexer: &mut Lexer<'src, M>,
         is_multiline: bool,
         terminator: char,
         literal_name: &'static str,

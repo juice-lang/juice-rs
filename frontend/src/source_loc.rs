@@ -9,17 +9,17 @@ use derive_where::derive_where;
 use crate::source_manager::{AriadneSourceManager, Source, SourceManager};
 
 #[derive_where(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceLoc<'a, M: SourceManager> {
-    pub source: Source<'a, M>,
+pub struct SourceLoc<'src, M: SourceManager> {
+    pub source: Source<'src, M>,
     pub offset: usize,
 }
 
-impl<'a, M: SourceManager> SourceLoc<'a, M> {
-    pub fn new(source: Source<'a, M>, offset: usize) -> Self {
+impl<'src, M: SourceManager> SourceLoc<'src, M> {
+    pub fn new(source: Source<'src, M>, offset: usize) -> Self {
         Self { source, offset }
     }
 
-    pub fn to_range(self, len: usize) -> SourceRange<'a, M> {
+    pub fn to_range(self, len: usize) -> SourceRange<'src, M> {
         SourceRange::new(self.source, self.offset, self.offset + len)
     }
 }
@@ -67,26 +67,26 @@ impl<M: AriadneSourceManager> Display for SourceLoc<'_, M> {
 }
 
 #[derive_where(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct SourceRange<'a, M: SourceManager> {
-    pub source: Source<'a, M>,
+pub struct SourceRange<'src, M: SourceManager> {
+    pub source: Source<'src, M>,
     pub start: usize,
     pub end: usize,
 }
 
-impl<'a, M: SourceManager> SourceRange<'a, M> {
-    pub fn new(source: Source<'a, M>, start: usize, end: usize) -> Self {
+impl<'src, M: SourceManager> SourceRange<'src, M> {
+    pub fn new(source: Source<'src, M>, start: usize, end: usize) -> Self {
         Self { source, start, end }
     }
 
-    pub fn start_loc(&self) -> SourceLoc<'a, M> {
+    pub fn start_loc(&self) -> SourceLoc<'src, M> {
         SourceLoc::new(self.source, self.start)
     }
 
-    pub fn end_loc(&self) -> SourceLoc<'a, M> {
+    pub fn end_loc(&self) -> SourceLoc<'src, M> {
         SourceLoc::new(self.source, self.end)
     }
 
-    pub fn get_str(&self) -> &'a str {
+    pub fn get_str(&self) -> &'src str {
         &self.source.get_contents()[self.start..self.end]
     }
 
@@ -99,10 +99,10 @@ impl<'a, M: SourceManager> SourceRange<'a, M> {
     }
 }
 
-impl<'a, M: SourceManager> ariadne::Span for SourceRange<'a, M> {
-    type SourceId = Source<'a, M>;
+impl<'src, M: SourceManager> ariadne::Span for SourceRange<'src, M> {
+    type SourceId = Source<'src, M>;
 
-    fn source(&self) -> &Source<'a, M> {
+    fn source(&self) -> &Source<'src, M> {
         &self.source
     }
 

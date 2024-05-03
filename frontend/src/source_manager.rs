@@ -144,49 +144,49 @@ impl private::AriadneSourceManager for DefaultSourceManager {
 
 impl AriadneSourceManager for DefaultSourceManager {}
 
-pub struct SourceCache<'a, M> {
-    source_manager: &'a M,
+pub struct SourceCache<'src, M> {
+    source_manager: &'src M,
 }
 
-impl<'a, M: AriadneSourceManager> ariadne::Cache<Source<'a, M>> for SourceCache<'a, M> {
+impl<'src, M: AriadneSourceManager> ariadne::Cache<Source<'src, M>> for SourceCache<'src, M> {
     type Storage = M::Storage;
 
     fn fetch(&mut self, id: &Source<M>) -> Result<&ariadne::Source<Self::Storage>, Box<dyn Debug + '_>> {
         Ok(self.source_manager.get_ariadne_source(id.key))
     }
 
-    fn display(&self, id: &Source<'a, M>) -> Option<Box<dyn Display + 'a>> {
+    fn display(&self, id: &Source<'src, M>) -> Option<Box<dyn Display + 'src>> {
         Some(Box::new(*id))
     }
 }
 
 #[derive_where(Debug, Clone, Copy)]
-pub struct Source<'a, M: SourceManager> {
+pub struct Source<'src, M: SourceManager> {
     key: M::Key,
-    source_manager: &'a M,
+    source_manager: &'src M,
 }
 
-impl<'a, M: SourceManager> Source<'a, M> {
-    pub fn get_contents(&self) -> &'a str {
+impl<'src, M: SourceManager> Source<'src, M> {
+    pub fn get_contents(&self) -> &'src str {
         self.source_manager.get_storage(self.key).as_ref()
     }
 
-    pub fn get_loc(&self, offset: usize) -> SourceLoc<'a, M> {
+    pub fn get_loc(&self, offset: usize) -> SourceLoc<'src, M> {
         SourceLoc::new(*self, offset)
     }
 
-    pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'a, M> {
+    pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'src, M> {
         SourceRange::new(*self, start, end)
     }
 }
 
-impl<'a, M: SourceManager<Storage = Arc<str>>> Source<'a, M> {
+impl<'src, M: SourceManager<Storage = Arc<str>>> Source<'src, M> {
     pub fn get_contents_owned(&self) -> Arc<str> {
         self.source_manager.get_storage(self.key).clone()
     }
 }
 
-impl<'a, M: AriadneSourceManager> Source<'a, M> {
+impl<'src, M: AriadneSourceManager> Source<'src, M> {
     pub fn get_line_and_column(&self, offset: usize) -> Option<(usize, usize)> {
         self.source_manager
             .get_ariadne_source(self.key)
@@ -195,12 +195,12 @@ impl<'a, M: AriadneSourceManager> Source<'a, M> {
     }
 }
 
-impl<'a> Source<'a, DefaultSourceManager> {
-    pub fn get_filepath_str(&self) -> &'a str {
+impl<'src> Source<'src, DefaultSourceManager> {
+    pub fn get_filepath_str(&self) -> &'src str {
         self.source_manager.rodeo.resolve(&self.key)
     }
 
-    pub fn get_filepath(&self) -> &'a Path {
+    pub fn get_filepath(&self) -> &'src Path {
         Path::new(self.get_filepath_str())
     }
 }

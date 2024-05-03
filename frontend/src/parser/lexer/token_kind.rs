@@ -1,3 +1,4 @@
+use derive_where::derive_where;
 use juice_macros::string_enum;
 
 use super::literal::LiteralKind;
@@ -40,11 +41,11 @@ string_enum! {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum TokenKind<'a, M: SourceManager> {
+#[derive_where(Debug, Clone)]
+pub enum TokenKind<'src, M: SourceManager> {
     Keyword(KeywordKind),
     Punctuation(PunctuationKind),
-    Literal(LiteralKind<'a, M>),
+    Literal(LiteralKind<'src, M>),
     Identifier,
     Operator,
     Unknown,

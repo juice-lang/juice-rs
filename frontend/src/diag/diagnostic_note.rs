@@ -3,7 +3,7 @@ use juice_macros::diagnostic_note;
 
 diagnostic_note!(
     #[derive(Debug, Clone)]
-    pub enum DiagnosticContextNote<'a> {
+    pub enum DiagnosticContextNote<'src> {
         InvalidCharacterLocation => "Invalid character is here",
         InvalidDigitLocation => "Invalid digit is here",
         InvalidUnicodeScalarLocation => "Invalid scalar is here",
@@ -24,7 +24,7 @@ diagnostic_note!(
 
 diagnostic_note!(
     #[derive(Debug, Clone)]
-    pub enum DiagnosticNote<'a> {
+    pub enum DiagnosticNote<'src> {
         MissingBlockCommentEnd(symbols: into Colored<&str> = "*/") =>
             "Missing trailing `{}` to terminate the block comment",
         ExpectedDigit(digit_name: into PrefixedWithArticle<&'static str>, digit_hint: into Colored<&'static str>) =>

@@ -5,7 +5,7 @@ use juice_macros::diagnostic;
 
 diagnostic!(
     #[derive(Debug, Clone)]
-    pub enum Diagnostic<'a> {
+    pub enum Diagnostic<'src> {
         [error] InvalidCharacter(c: into Colored<char>) => "Invalid character `{}` in source file",
         [error] UnterminatedComment => "Unterminated block comment",
         [error] UnexpectedCommentTerminator => "Unexpected block comment terminator",
@@ -19,7 +19,7 @@ diagnostic!(
         [error] NewlineInLiteral(literal_name: &'static str) => "Newline in {} literal",
         [error] ExpectedEscapeSequence(c: into Colored<char> = '\\', literal_name: &'static str) =>
             "Expected escape sequence after `{}` in {} literal",
-        [error] InvalidUnicodeScalar(hex: into Colored<&'a str>, literal_name: &'static str) =>
+        [error] InvalidUnicodeScalar(hex: into Colored<&'src str>, literal_name: &'static str) =>
             "Invalid Unicode scalar value `{}` in {} literal",
         [error] InvalidEscapeSequence(c: into Colored<char>, literal_name: &'static str) =>
             "Invalid escape sequence `{}` in {} literal",
@@ -38,7 +38,7 @@ diagnostic!(
     }
 
     #[derive(Debug, Clone)]
-    pub enum StaticDiagnostic<'a> {
+    pub enum StaticDiagnostic<'src> {
         [error] IoError(message: into Colored<String>) => "Error while doing IO: {}",
     }
 );
