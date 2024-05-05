@@ -1,20 +1,20 @@
 use std::{
     cmp::Ordering,
-    fmt::{Display, Formatter, Result as FmtResult},
-    ops::{Add, Sub},
+    fmt::{Debug, Display, Formatter, Result as FmtResult},
+    ops::{Add, Range, Sub},
 };
 
 use derive_where::derive_where;
 
 use crate::source_manager::{AriadneSourceManager, Source, SourceManager};
 
-#[derive_where(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceLoc<'src, M: SourceManager> {
+#[derive_where(Clone, Copy, PartialEq, Eq)]
+pub struct SourceLoc<'src, M: 'src + SourceManager> {
     pub source: Source<'src, M>,
     pub offset: usize,
 }
 
-impl<'src, M: SourceManager> SourceLoc<'src, M> {
+impl<'src, M: 'src + SourceManager> SourceLoc<'src, M> {
     pub fn new(source: Source<'src, M>, offset: usize) -> Self {
         Self { source, offset }
     }
@@ -56,6 +56,15 @@ impl<M: SourceManager> Sub<usize> for SourceLoc<'_, M> {
     }
 }
 
+impl<M: SourceManager> Debug for SourceLoc<'_, M> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct("SourceLoc")
+            .field("source", &format!("{}", self.source))
+            .field("offset", &self.offset)
+            .finish()
+    }
+}
+
 impl<M: AriadneSourceManager> Display for SourceLoc<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         if let Some((line, column)) = self.get_line_and_column() {
@@ -66,14 +75,14 @@ impl<M: AriadneSourceManager> Display for SourceLoc<'_, M> {
     }
 }
 
-#[derive_where(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct SourceRange<'src, M: SourceManager> {
+#[derive_where(PartialEq, Eq, Clone, Copy)]
+pub struct SourceRange<'src, M: 'src + SourceManager> {
     pub source: Source<'src, M>,
     pub start: usize,
     pub end: usize,
 }
 
-impl<'src, M: SourceManager> SourceRange<'src, M> {
+impl<'src, M: 'src + SourceManager> SourceRange<'src, M> {
     pub fn new(source: Source<'src, M>, start: usize, end: usize) -> Self {
         Self { source, start, end }
     }
@@ -99,7 +108,7 @@ impl<'src, M: SourceManager> SourceRange<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> ariadne::Span for SourceRange<'src, M> {
+impl<'src, M: 'src + SourceManager> ariadne::Span for SourceRange<'src, M> {
     type SourceId = Source<'src, M>;
 
     fn source(&self) -> &Source<'src, M> {
@@ -112,6 +121,37 @@ impl<'src, M: SourceManager> ariadne::Span for SourceRange<'src, M> {
 
     fn end(&self) -> usize {
         self.end
+    }
+}
+
+impl<'src, M: 'src + SourceManager> chumsky::span::Span for SourceRange<'src, M> {
+    type Context = Source<'src, M>;
+    type Offset = usize;
+
+    fn new(context: Source<'src, M>, range: Range<usize>) -> Self {
+        Self::new(context, range.start, range.end)
+    }
+
+    fn context(&self) -> Source<'src, M> {
+        self.source
+    }
+
+    fn start(&self) -> usize {
+        self.start
+    }
+
+    fn end(&self) -> usize {
+        self.end
+    }
+}
+
+impl<M: SourceManager> Debug for SourceRange<'_, M> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct("SourceRange")
+            .field("source", &format!("{}", self.source))
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .finish()
     }
 }
 

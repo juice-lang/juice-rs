@@ -14,7 +14,7 @@ use crate::{
     Result,
 };
 
-pub trait SourceManager: private::SourceManager + Debug + Sized {
+pub trait SourceManager: private::SourceManager + Debug + Send + Sync + Sized {
     type Index;
     type Output<T>;
 
@@ -29,7 +29,7 @@ mod private {
     };
 
     pub trait SourceManager {
-        type Key: Debug + Clone + Copy + Eq + Hash;
+        type Key: Debug + Clone + Copy + Eq + Hash + Send + Sync;
         type Storage: AsRef<str>;
 
         fn get_storage(&self, key: Self::Key) -> &Self::Storage;
@@ -144,11 +144,11 @@ impl private::AriadneSourceManager for DefaultSourceManager {
 
 impl AriadneSourceManager for DefaultSourceManager {}
 
-pub struct SourceCache<'src, M> {
+pub struct SourceCache<'src, M: 'src> {
     source_manager: &'src M,
 }
 
-impl<'src, M: AriadneSourceManager> ariadne::Cache<Source<'src, M>> for SourceCache<'src, M> {
+impl<'src, M: 'src + AriadneSourceManager> ariadne::Cache<Source<'src, M>> for SourceCache<'src, M> {
     type Storage = M::Storage;
 
     fn fetch(&mut self, id: &Source<M>) -> Result<&ariadne::Source<Self::Storage>, Box<dyn Debug + '_>> {
@@ -161,12 +161,12 @@ impl<'src, M: AriadneSourceManager> ariadne::Cache<Source<'src, M>> for SourceCa
 }
 
 #[derive_where(Debug, Clone, Copy)]
-pub struct Source<'src, M: SourceManager> {
+pub struct Source<'src, M: 'src + SourceManager> {
     key: M::Key,
     source_manager: &'src M,
 }
 
-impl<'src, M: SourceManager> Source<'src, M> {
+impl<'src, M: 'src + SourceManager> Source<'src, M> {
     pub fn get_contents(&self) -> &'src str {
         self.source_manager.get_storage(self.key).as_ref()
     }
@@ -178,15 +178,21 @@ impl<'src, M: SourceManager> Source<'src, M> {
     pub fn get_range(&self, start: usize, end: usize) -> SourceRange<'src, M> {
         SourceRange::new(*self, start, end)
     }
+
+    pub fn get_eof_range(&self) -> SourceRange<'src, M> {
+        let contents = self.get_contents();
+        let end = contents.len();
+        SourceRange::new(*self, end, end)
+    }
 }
 
-impl<'src, M: SourceManager<Storage = Arc<str>>> Source<'src, M> {
+impl<'src, M: 'src + SourceManager<Storage = Arc<str>>> Source<'src, M> {
     pub fn get_contents_owned(&self) -> Arc<str> {
         self.source_manager.get_storage(self.key).clone()
     }
 }
 
-impl<'src, M: AriadneSourceManager> Source<'src, M> {
+impl<'src, M: 'src + AriadneSourceManager> Source<'src, M> {
     pub fn get_line_and_column(&self, offset: usize) -> Option<(usize, usize)> {
         self.source_manager
             .get_ariadne_source(self.key)

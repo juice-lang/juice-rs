@@ -67,26 +67,43 @@ impl Radix {
 }
 
 #[derive_where(Debug, Clone)]
-pub enum InterpolationPart<'src, M: SourceManager> {
+pub enum InterpolationPart<'src, M: 'src + SourceManager> {
     String(Arc<str>),
-    Interpolation(Vec<Token<'src, M>>),
+    Interpolation(Arc<[Token<'src, M>]>),
 }
 
 #[derive_where(Debug, Clone)]
-pub enum LiteralKind<'src, M: SourceManager> {
+pub enum LiteralKind<'src, M: 'src + SourceManager> {
     Int(u64, Radix),
-    BigInt(Vec<u64>, Radix),
+    BigInt(Arc<[u64]>, Radix),
     Float(f64),
     Char(char),
     String(Arc<str>),
-    StringInterpolation(Vec<InterpolationPart<'src, M>>),
+    StringInterpolation(Arc<[InterpolationPart<'src, M>]>),
     InvalidInt,
     InvalidFloat,
     InvalidChar,
     InvalidString,
 }
 
-impl<'src, M: SourceManager> LiteralKind<'src, M> {
+impl<M: SourceManager> PartialEq for LiteralKind<'_, M> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Int(a, ra), Self::Int(b, rb)) => a == b && ra == rb,
+            (Self::BigInt(a, ra), Self::BigInt(b, rb)) => a == b && ra == rb,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Char(a), Self::Char(b)) => a == b,
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::InvalidInt, Self::InvalidInt)
+            | (Self::InvalidFloat, Self::InvalidFloat)
+            | (Self::InvalidChar, Self::InvalidChar)
+            | (Self::InvalidString, Self::InvalidString) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
     pub fn lex_number(lexer: &mut Lexer<'src, M>, start: char) -> Self {
         let (radix, mut is_first) = (start == '0')
             .then(|| lexer.match_char_map(Radix::from_prefix))
@@ -239,7 +256,7 @@ impl<'src, M: SourceManager> LiteralKind<'src, M> {
         match words.len() {
             0 => Self::Int(0, radix),
             1 => Self::Int(words[0], radix),
-            _ => Self::BigInt(words, radix),
+            _ => Self::BigInt(words.into(), radix),
         }
     }
 
@@ -436,12 +453,12 @@ impl<'src, M: SourceManager> LiteralKind<'src, M> {
         recovering_character: bool,
         literal_name: &'static str,
     ) -> Self {
-        enum Part<'src, M: SourceManager> {
+        enum Part<'src, M: 'src + SourceManager> {
             String {
                 content: String,
                 newline_locations: Vec<(usize, SourceLoc<'src, M>)>,
             },
-            Interpolation(Vec<Token<'src, M>>),
+            Interpolation(Arc<[Token<'src, M>]>),
         }
 
         if is_multiline && lexer.in_interpolation {
@@ -916,12 +933,12 @@ impl<'src, M: SourceManager> LiteralKind<'src, M> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InterpolationPart, LiteralKind::*, Radix::*};
+    use super::{InterpolationPart, Radix::*};
     use crate::{
         diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
         parser::lexer::{
             test::{assert_all_reports, assert_all_tokens, run_lexer},
-            token_kind::{PunctuationKind::*, TokenKind::*},
+            Tok,
         },
         source_manager::test::SourceManager,
     };
@@ -943,31 +960,31 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Newline), 0;
-            Literal(Int(0, Decimal)), 13;
-            Literal(Int(0, Hexadecimal)), 15..18;
-            Literal(Int(0, Binary)), 19..22;
-            Literal(Int(0, Octal)), 23..26;
-            Punctuation(Newline), 26;
-            Literal(Int(10, Decimal)), 39..41;
-            Literal(Int(16, Hexadecimal)), 42..46;
-            Literal(Int(2, Binary)), 47..51;
-            Literal(Int(8, Octal)), 52..56;
-            Punctuation(Newline), 56;
-            Literal(Int(1_000_000, Decimal)), 69..78;
-            Punctuation(Newline), 78;
-            Literal(BigInt(v, Hexadecimal)) if v.len() == 2 && v[0] == 0 && v[1] == 1, 91..114;
-            Punctuation(Newline), 114;
-            Literal(Int(0, Decimal)), 127;
-            Punctuation(Dot), 128;
-            Identifier, 129, "foo";
-            Punctuation(Newline), 132;
-            Identifier, 145, "foo";
-            Punctuation(Dot), 148;
-            Literal(Int(0, Decimal)), 149;
-            Punctuation(Dot), 150;
-            Literal(Int(0, Decimal)), 151;
-            Punctuation(Newline), 152;
+            Tok![Newline], 0;
+            Tok![Int(0, Decimal)], 13;
+            Tok![Int(0, Hexadecimal)], 15..18;
+            Tok![Int(0, Binary)], 19..22;
+            Tok![Int(0, Octal)], 23..26;
+            Tok![Newline], 26;
+            Tok![Int(10, Decimal)], 39..41;
+            Tok![Int(16, Hexadecimal)], 42..46;
+            Tok![Int(2, Binary)], 47..51;
+            Tok![Int(8, Octal)], 52..56;
+            Tok![Newline], 56;
+            Tok![Int(1_000_000, Decimal)], 69..78;
+            Tok![Newline], 78;
+            Tok![BigInt(v, Hexadecimal)] if v.len() == 2 && v[0] == 0 && v[1] == 1, 91..114;
+            Tok![Newline], 114;
+            Tok![Int(0, Decimal)], 127;
+            Tok![.], 128;
+            Tok![Ident], 129, "foo";
+            Tok![Newline], 132;
+            Tok![Ident], 145, "foo";
+            Tok![.], 148;
+            Tok![Int(0, Decimal)], 149;
+            Tok![.], 150;
+            Tok![Int(0, Decimal)], 151;
+            Tok![Newline], 152;
         );
     }
 
@@ -1010,24 +1027,24 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Newline), 0;
-            Literal(Float(0.0)), 13..16;
-            Punctuation(Newline), 16;
-            Literal(Float(1.0)), 29..32;
-            Literal(Float(1.0)), 33..38;
-            Literal(Float(10.0)), 39..45;
-            Literal(Float(0.1)), 46..52;
-            Literal(Float(1.0)), 53..56;
-            Literal(Float(10.0)), 57..61;
-            Literal(Float(0.1)), 62..66;
-            Punctuation(Newline), 66;
-            Literal(Float(1_000.0)), 79..86;
-            Literal(Float(1.000_1)), 87..94;
-            Punctuation(Newline), 94;
-            Literal(Float(0.0)), 107..110;
-            Punctuation(Dot), 110;
-            Identifier, 111, "foo";
-            Punctuation(Newline), 114;
+            Tok![Newline], 0;
+            Tok![Float(0.0)], 13..16;
+            Tok![Newline], 16;
+            Tok![Float(1.0)], 29..32;
+            Tok![Float(1.0)], 33..38;
+            Tok![Float(10.0)], 39..45;
+            Tok![Float(0.1)], 46..52;
+            Tok![Float(1.0)], 53..56;
+            Tok![Float(10.0)], 57..61;
+            Tok![Float(0.1)], 62..66;
+            Tok![Newline], 66;
+            Tok![Float(1_000.0)], 79..86;
+            Tok![Float(1.000_1)], 87..94;
+            Tok![Newline], 94;
+            Tok![Float(0.0)], 107..110;
+            Tok![.], 110;
+            Tok![Ident], 111, "foo";
+            Tok![Newline], 114;
         );
     }
 
@@ -1059,20 +1076,20 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Literal(Char('a')), 0..3;
-            Literal(Char('0')), 4..7;
-            Literal(Char(' ')), 8..11;
-            Literal(Char('"')), 12..15;
-            Literal(Char('\0')), 16..20;
-            Literal(Char('\\')), 21..25;
-            Literal(Char('\t')), 26..30;
-            Literal(Char('\n')), 31..35;
-            Literal(Char('\r')), 36..40;
-            Literal(Char('"')), 41..45;
-            Literal(Char('\'')), 46..50;
-            Literal(Char(' ')), 51..59;
-            Literal(Char('\u{1F600}')), 60..71;
-            Literal(Char('\u{1F600}')), 72..78;
+            Tok![Char('a')], 0..3;
+            Tok![Char('0')], 4..7;
+            Tok![Char(' ')], 8..11;
+            Tok![Char('"')], 12..15;
+            Tok![Char('\0')], 16..20;
+            Tok![Char('\\')], 21..25;
+            Tok![Char('\t')], 26..30;
+            Tok![Char('\n')], 31..35;
+            Tok![Char('\r')], 36..40;
+            Tok![Char('"')], 41..45;
+            Tok![Char('\'')], 46..50;
+            Tok![Char(' ')], 51..59;
+            Tok![Char('\u{1F600}')], 60..71;
+            Tok![Char('\u{1F600}')], 72..78;
         );
     }
 
@@ -1162,28 +1179,28 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Newline), 0;
-            Literal(String(s)) if s.as_ref() == "", 13..15;
-            Literal(String(s)) if s.as_ref() == "hello", 16..23;
-            Literal(String(s)) if s.as_ref() == "'\0\\\t\n\r\"\'$ ", 24..49;
-            Punctuation(Newline), 49;
-            Literal(String(s)) if s.as_ref() == "", 62..66;
-            Literal(String(s)) if s.as_ref() == "hello", 67..76;
-            Literal(String(s)) if s.as_ref() == "\\n\n", 77..86;
-            Literal(String(s)) if s.as_ref() == "\\n\\#n\n", 87..102;
-            Punctuation(Newline), 102;
-            Literal(String(s)) if s.as_ref() == "", 115..121;
-            Literal(String(s)) if s.as_ref() == "hello", 122..133;
-            Literal(String(s)) if s.as_ref() == "\n", 134..142;
-            Punctuation(Newline), 142;
-            Literal(String(s)) if s.as_ref() == "hello", 155..192;
-            Punctuation(Newline), 192;
-            Literal(String(s)) if s.as_ref() == "hello, world", 205..263;
-            Punctuation(Newline), 263;
-            Literal(String(s)) if s.as_ref() == "hello", 276..317;
-            Punctuation(Newline), 317;
-            Literal(String(s)) if s.as_ref() == "hello\\\nworld!", 330..404;
-            Punctuation(Newline), 404;
+            Tok![Newline], 0;
+            Tok![String(s)] if s.as_ref() == "", 13..15;
+            Tok![String(s)] if s.as_ref() == "hello", 16..23;
+            Tok![String(s)] if s.as_ref() == "'\0\\\t\n\r\"\'$ ", 24..49;
+            Tok![Newline], 49;
+            Tok![String(s)] if s.as_ref() == "", 62..66;
+            Tok![String(s)] if s.as_ref() == "hello", 67..76;
+            Tok![String(s)] if s.as_ref() == "\\n\n", 77..86;
+            Tok![String(s)] if s.as_ref() == "\\n\\#n\n", 87..102;
+            Tok![Newline], 102;
+            Tok![String(s)] if s.as_ref() == "", 115..121;
+            Tok![String(s)] if s.as_ref() == "hello", 122..133;
+            Tok![String(s)] if s.as_ref() == "\n", 134..142;
+            Tok![Newline], 142;
+            Tok![String(s)] if s.as_ref() == "hello", 155..192;
+            Tok![Newline], 192;
+            Tok![String(s)] if s.as_ref() == "hello, world", 205..263;
+            Tok![Newline], 263;
+            Tok![String(s)] if s.as_ref() == "hello", 276..317;
+            Tok![Newline], 317;
+            Tok![String(s)] if s.as_ref() == "hello\\\nworld!", 330..404;
+            Tok![Newline], 404;
         );
     }
 
@@ -1258,51 +1275,51 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Newline), 0;
-            Literal(StringInterpolation(parts)) if matches!(
-                parts.as_slice(),
+            Tok![Newline], 0;
+            Tok![Interpolation(parts)] if matches!(
+                parts.as_ref(),
                 [
                     InterpolationPart::String(s),
                     InterpolationPart::Interpolation(inner_tokens),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
-                        Identifier, 23, "world";
+                        Tok![Ident], 23, "world";
                     );
                     s.as_ref() == "hello, "
                 }
             ), 13..30;
-            Literal(StringInterpolation(parts)) if matches!(
-                parts.as_slice(),
+            Tok![Interpolation(parts)] if matches!(
+                parts.as_ref(),
                 [
                     InterpolationPart::Interpolation(inner_tokens_1),
                     InterpolationPart::Interpolation(inner_tokens_2),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens_1;
-                        Identifier, 34, "a";
-                        Operator, 36, "+";
-                        Identifier, 38, "b";
+                        Tok![Ident], 34, "a";
+                        Tok![BinOp], 36, "+";
+                        Tok![Ident], 38, "b";
                     );
                     assert_all_tokens!(
                         inner_tokens_2;
-                        Identifier, 42, "c";
+                        Tok![Ident], 42, "c";
                     );
                     true
                 }
             ), 31..45;
-            Punctuation(Newline), 45;
-            Literal(StringInterpolation(parts)) if matches!(
-                parts.as_slice(),
+            Tok![Newline], 45;
+            Tok![Interpolation(parts)] if matches!(
+                parts.as_ref(),
                 [InterpolationPart::Interpolation(inner_tokens)] if {
                     assert_all_tokens!(
                         inner_tokens;
-                        Literal(StringInterpolation(parts)) if matches!(
-                            parts.as_slice(),
+                        Tok![Interpolation(parts)] if matches!(
+                            parts.as_ref(),
                             [InterpolationPart::Interpolation(inner_inner_tokens)] if {
                                 assert_all_tokens!(
                                     inner_inner_tokens;
-                                    Identifier, 64, "a";
+                                    Tok![Ident], 64, "a";
                                 );
                                 true
                             }
@@ -1311,21 +1328,21 @@ mod tests {
                     true
                 }
             ), 58..69;
-            Punctuation(Newline), 69;
-            Literal(StringInterpolation(parts)) if matches!(
-                parts.as_slice(),
+            Tok![Newline], 69;
+            Tok![Interpolation(parts)] if matches!(
+                parts.as_ref(),
                 [
                     InterpolationPart::String(s),
                     InterpolationPart::Interpolation(inner_tokens),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
-                        Identifier, 108, "world";
+                        Tok![Ident], 108, "world";
                     );
                     s.as_ref() == "hello$, "
                 }
             ), 82..130;
-            Punctuation(Newline), 130;
+            Tok![Newline], 130;
         );
     }
 

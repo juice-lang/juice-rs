@@ -8,4 +8,5 @@ rust-version = { workspace = true }
 
 [dependencies]
 ariadne = { workspace = true }
+chumsky = { workspace = true }
 in_definite = "1.0.0"

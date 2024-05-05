@@ -6,13 +6,13 @@ use crate::{
     source_manager::{DefaultSourceManager, SourceManager},
 };
 
-pub struct Engine<'src, M, C> {
+pub struct Engine<'src, M: 'src, C> {
     source_manager: &'src M,
     consumer: C,
     had_error: AtomicBool,
 }
 
-impl<'src, M: SourceManager, C: DiagnosticConsumer<'src, M>> Engine<'src, M, C> {
+impl<'src, M: 'src + SourceManager, C: DiagnosticConsumer<'src, M>> Engine<'src, M, C> {
     pub fn new_with_consumer(source_manager: &'src M, consumer: C) -> Self {
         Self {
             source_manager,
@@ -60,7 +60,7 @@ impl<'src> Engine<'src, DefaultSourceManager, DefaultDiagnosticConsumer> {
 }
 
 #[must_use = "report does nothing unless diagnosed"]
-pub struct Report<'src, 'diag, M: SourceManager, C> {
+pub struct Report<'src, 'diag, M: 'src + SourceManager, C> {
     pub source_loc: SourceLoc<'src, M>,
     pub diagnostic: Diagnostic<'src>,
     pub context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
@@ -68,7 +68,7 @@ pub struct Report<'src, 'diag, M: SourceManager, C> {
     engine: &'diag Engine<'src, M, C>,
 }
 
-impl<'src, 'diag, M: SourceManager, C: DiagnosticConsumer<'src, M>> Report<'src, 'diag, M, C>
+impl<'src, 'diag, M: 'src + SourceManager, C: DiagnosticConsumer<'src, M>> Report<'src, 'diag, M, C>
 where
     'src: 'diag,
 {

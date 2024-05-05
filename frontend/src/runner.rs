@@ -4,9 +4,14 @@ use std::{
     path::PathBuf,
 };
 
+use chumsky::{
+    input::{Input as _, Stream},
+    Parser as _,
+};
+
 use crate::{
     diag::DiagnosticEngine,
-    parser::Lexer,
+    parser::{expr_parser, Lexer},
     source_manager::{DefaultSourceManager, SourceManager},
     Result,
 };
@@ -65,26 +70,30 @@ impl Runner {
         }
     }
 
-    fn run_impl(self) -> Result<bool> {
+    fn run_impl(mut self) -> Result<bool> {
         let source_manager = DefaultSourceManager::new(self.args.input_filepath)?;
 
         let diagnostics = DiagnosticEngine::new(&source_manager);
 
-        let mut lexer = Lexer::new(source_manager.get_main_source());
+        let source = source_manager.get_main_source();
 
-        let tokens = (&mut lexer).collect::<Vec<_>>();
+        let mut lexer = Lexer::new(source);
+
+        let parser_input = Stream::from_iter((&mut lexer).map(|t| (t.kind, t.source_range)))
+            .boxed()
+            .spanned(source.get_eof_range());
+
+        let (ast, errors) = expr_parser().parse(parser_input).into_output_errors();
 
         lexer.diagnose_errors(&diagnostics)?;
-        check_error!(diagnostics);
 
-        for token in tokens {
-            println!(
-                "{:?} {:?} {} {}",
-                token.kind,
-                token.source_range.get_str(),
-                token.has_leading_whitespace,
-                token.has_trailing_whitespace
-            );
+        println!("{:?}", errors);
+
+        if let Some(ast) = ast {
+            if self.args.action == Action::DumpParse {
+                writeln!(self.args.output_stream, "{}", ast)?;
+                return Ok(true);
+            }
         }
 
         check_error!(diagnostics);

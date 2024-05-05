@@ -7,9 +7,11 @@ edition = "2021"
 
 [dependencies]
 ariadne = { workspace = true }
+chumsky = { workspace = true }
 derive-where = "1.2.7"
 derive_more = { workspace = true }
 juice-core = { workspace = true }
 juice-macros = { workspace = true }
 lasso = "0.7.2"
 num-bigint = "0.4.4"
+thousands = "0.2.0"

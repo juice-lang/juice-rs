@@ -1,13 +1,14 @@
-mod literal;
-mod token;
-mod token_kind;
+pub mod literal;
+pub mod token;
+pub mod token_kind;
 
 use std::{num::NonZero, ops::Try as _};
 
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
-use self::literal::LiteralKind;
+pub(crate) use self::token_kind::Tok;
 pub use self::{
+    literal::LiteralKind,
     token::Token,
     token_kind::{KeywordKind, PunctuationKind, TokenKind},
 };
@@ -15,18 +16,18 @@ use crate::{
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
     source_loc::{SourceLoc, SourceRange},
     source_manager::{Source, SourceManager},
-    Result, Tok,
+    Result,
 };
 
 #[derive(Debug, Clone)]
-pub struct Error<'src, M: SourceManager> {
+pub struct Error<'src, M: 'src + SourceManager> {
     source_loc: SourceLoc<'src, M>,
     diagnostic: Diagnostic<'src>,
     context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
     note: Option<DiagnosticNote<'src>>,
 }
 
-impl<'src, M: SourceManager> Error<'src, M> {
+impl<'src, M: 'src + SourceManager> Error<'src, M> {
     pub fn diagnose<C: DiagnosticConsumer<'src, M>>(self, diagnostics: &DiagnosticEngine<'src, M, C>) -> C::Output {
         let mut report = diagnostics.report(self.source_loc, self.diagnostic);
 
@@ -43,7 +44,7 @@ impl<'src, M: SourceManager> Error<'src, M> {
 }
 
 #[derive(Debug, Clone)]
-struct PendingError<'src, M: SourceManager> {
+struct PendingError<'src, M: 'src + SourceManager> {
     source_loc: SourceLoc<'src, M>,
     diagnostic: Diagnostic<'src>,
     initial_context_note: DiagnosticContextNote<'src>,
@@ -52,7 +53,7 @@ struct PendingError<'src, M: SourceManager> {
 }
 
 #[must_use = "Errors must be recorded to be diagnosed"]
-struct ErrorBuilder<'src, 'lex, M: SourceManager>
+struct ErrorBuilder<'src, 'lex, M: 'src + SourceManager>
 where
     'src: 'lex,
 {
@@ -64,7 +65,7 @@ where
     lexer: &'lex mut Lexer<'src, M>,
 }
 
-impl<'src, 'lex, M: SourceManager> ErrorBuilder<'src, 'lex, M> {
+impl<'src, 'lex, M: 'src + SourceManager> ErrorBuilder<'src, 'lex, M> {
     fn new_with_range(
         source_range: SourceRange<'src, M>,
         at_end: bool,
@@ -158,13 +159,14 @@ impl<'src, 'lex, M: SourceManager> ErrorBuilder<'src, 'lex, M> {
 }
 
 #[derive(Debug)]
-pub struct Lexer<'src, M: SourceManager> {
+pub struct Lexer<'src, M: 'src + SourceManager> {
     source: Source<'src, M>,
     chars: PeekableChars<'src>,
     start: usize,
     current: usize,
     leading_whitespace_start: usize,
     last_considered_leading_whitespace: bool,
+    last_was_borrow: bool,
     last_was_dot: bool,
     in_interpolation: bool,
     brace_depth: isize,
@@ -182,6 +184,7 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
             current: 0,
             leading_whitespace_start: 0,
             last_considered_leading_whitespace: true,
+            last_was_borrow: false,
             last_was_dot: false,
             in_interpolation: false,
             brace_depth: 0,
@@ -380,7 +383,11 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
                 if self.peek() == Some('w') && self.peek2().is_none_or(|c| !c.is_identifier_char()) {
                     self.advance();
                     Tok![&w]
-                } else if self.peek().is_some_and(CharExt::is_operator) {
+                } else if self
+                    .chars
+                    .peek_first_after(CharExt::is_operator)
+                    .is_none_or(CharExt::is_trailing_whitespace)
+                {
                     self.consume_operator(false)
                 } else {
                     Tok![&]
@@ -463,6 +470,15 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
                         continue;
                     }
                 }
+                Some('&') => {
+                    if self
+                        .chars
+                        .peek_first_after(CharExt::is_operator)
+                        .is_some_and(|c| !c.is_trailing_whitespace())
+                    {
+                        break;
+                    }
+                }
                 _ => {}
             }
 
@@ -471,7 +487,28 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
             }
         }
 
-        Tok![Op]
+        let has_leading_whitespace = self.last_considered_leading_whitespace
+            || !self.get_leading_whitespace_range().is_empty()
+            || self.last_was_borrow;
+
+        let has_trailing_whitespace = self
+            .peek()
+            .is_none_or(|c| c.is_trailing_whitespace() || (c == '/' && matches!(self.peek2(), Some('/') | Some('*'))));
+
+        let next_is_dot = self.peek() == Some('.');
+
+        match (has_leading_whitespace, has_trailing_whitespace) {
+            (true, false) => Tok![PrefixOp],
+            (false, true) => Tok![PostfixOp],
+            (true, true) => Tok![BinOp],
+            (false, false) => {
+                if next_is_dot {
+                    Tok![PostfixOp]
+                } else {
+                    Tok![BinOp]
+                }
+            }
+        }
     }
 
     fn consume_number_literal(&mut self, start: char) -> TokenKind<'src, M> {
@@ -537,28 +574,17 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
             self.errors.push(error);
         }
 
-        let has_leading_whitespace =
-            self.last_considered_leading_whitespace || !self.get_leading_whitespace_range().is_empty();
+        self.last_considered_leading_whitespace = current_range
+            .get_str()
+            .chars()
+            .last()
+            .is_some_and(CharExt::is_leading_whitespace);
 
-        let has_trailing_whitespace = self
-            .peek()
-            .is_none_or(|c| c.is_trailing_whitespace() || (c == '/' && matches!(self.peek2(), Some('/') | Some('*'))));
+        self.last_was_borrow = matches!(kind, Tok![&] | Tok![&w]);
 
-        if let Some(c) = current_range.get_str().chars().last() {
-            self.last_considered_leading_whitespace = c.is_leading_whitespace();
-        }
+        self.last_was_dot = matches!(kind, Tok![.]);
 
-        if matches!(kind, TokenKind::Punctuation(PunctuationKind::Dot)) {
-            self.last_was_dot = true;
-        }
-
-        Token::new(
-            kind,
-            current_range,
-            self.get_leading_whitespace_range(),
-            has_leading_whitespace,
-            has_trailing_whitespace,
-        )
+        Token::new(kind, current_range, self.get_leading_whitespace_range())
     }
 
     fn error<'lex>(
@@ -690,7 +716,7 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> Iterator for Lexer<'src, M> {
+impl<'src, M: 'src + SourceManager> Iterator for Lexer<'src, M> {
     type Item = Token<'src, M>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -976,14 +1002,11 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use super::{
-        test::{assert_all_tokens, run_lexer},
-        KeywordKind::*,
-        PunctuationKind::*,
-        TokenKind::*,
+        test::{assert_all_reports, assert_all_tokens, run_lexer},
+        Tok,
     };
     use crate::{
         diag::{Diagnostic, DiagnosticContextNote, DiagnosticNote},
-        parser::lexer::{test::assert_all_reports, Token},
         source_manager::test::SourceManager,
     };
 
@@ -995,44 +1018,45 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Keyword(Else), 0..4;
-            Keyword(If), 5..7;
-            Keyword(Let), 8..11;
-            Keyword(Var), 12..15;
-            Keyword(While), 16..21;
-            Identifier, 22, "foo";
-            Identifier, 26, "letter";
+            Tok![else], 0..4;
+            Tok![if], 5..7;
+            Tok![let], 8..11;
+            Tok![var], 12..15;
+            Tok![while], 16..21;
+            Tok![Ident], 22, "foo";
+            Tok![Ident], 26, "letter";
         );
     }
 
     #[test]
     fn test_punctuation() {
-        static SOURCE_MANAGER: SourceManager = SourceManager::new("` ( ) [ ] { } , : ; @ ? . = => -> & &w # \n");
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("` ( ) [ ] { } , : ; @ ? . = => -> &x &w # \n");
 
         let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Backtick), 0;
-            Punctuation(LeftParen), 2;
-            Punctuation(RightParen), 4;
-            Punctuation(LeftBracket), 6;
-            Punctuation(RightBracket), 8;
-            Punctuation(LeftBrace), 10;
-            Punctuation(RightBrace), 12;
-            Punctuation(Comma), 14;
-            Punctuation(Colon), 16;
-            Punctuation(Semicolon), 18;
-            Punctuation(At), 20;
-            Punctuation(QuestionMark), 22;
-            Punctuation(Dot), 24;
-            Punctuation(Equals), 26;
-            Punctuation(FatArrow), 28..30;
-            Punctuation(Arrow), 31..33;
-            Punctuation(Ampersand), 34;
-            Punctuation(AmpersandW), 36..38;
-            Punctuation(NumberSign), 39;
-            Punctuation(Newline), 41;
+            Tok![Backtick], 0;
+            Tok![LeftParen], 2;
+            Tok![RightParen], 4;
+            Tok![LeftBracket], 6;
+            Tok![RightBracket], 8;
+            Tok![LeftBrace], 10;
+            Tok![RightBrace], 12;
+            Tok![,], 14;
+            Tok![:], 16;
+            Tok![;], 18;
+            Tok![@], 20;
+            Tok![?], 22;
+            Tok![.], 24;
+            Tok![=], 26;
+            Tok![=>], 28..30;
+            Tok![->], 31..33;
+            Tok![&], 34;
+            Tok![Ident], 35, "x";
+            Tok![&w], 37..39;
+            Tok![#], 40;
+            Tok![Newline], 42;
         );
     }
 
@@ -1044,16 +1068,98 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Operator, 0, "+";
-            Operator, 2, "-";
-            Punctuation(Dot), 4;
-            Operator, 6, "..";
-            Operator, 9, "./.";
-            Operator, 13, "+";
-            Punctuation(Dot), 14;
-            Operator, 16, "^*^";
-            Operator, 20, "-";
-            Identifier, 21, "hello";
+            Tok![BinOp], 0, "+";
+            Tok![BinOp], 2, "-";
+            Tok![.], 4;
+            Tok![BinOp], 6, "..";
+            Tok![BinOp], 9, "./.";
+            Tok![PrefixOp], 13, "+";
+            Tok![.], 14;
+            Tok![BinOp], 16, "^*^";
+            Tok![PrefixOp], 20, "-";
+            Tok![Ident], 21, "hello";
+        );
+    }
+
+    #[test]
+    fn test_operator_kind() {
+        static SOURCE_MANAGER: SourceManager = SourceManager::new("+a-b * c++ +\n-d--.e++");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Tok![PrefixOp], 0, "+";
+            Tok![Ident], 1, "a";
+            Tok![BinOp], 2, "-";
+            Tok![Ident], 3, "b";
+            Tok![BinOp], 5, "*";
+            Tok![Ident], 7, "c";
+            Tok![PostfixOp], 8, "++";
+            Tok![BinOp], 11, "+";
+            Tok![Newline], 12;
+            Tok![PrefixOp], 13, "-";
+            Tok![Ident], 14, "d";
+            Tok![PostfixOp], 15, "--";
+            Tok![.], 17;
+            Tok![Ident], 18, "e";
+            Tok![PostfixOp], 19, "++";
+        );
+    }
+
+    #[test]
+    fn test_borrow() {
+        static SOURCE_MANAGER: SourceManager =
+            SourceManager::new("&& &&x &&w &&& &&&x &&&w &&&() &&- &&-x &&w-x &&-& &&-&x &&-&w &-&-&x");
+
+        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
+
+        assert_all_tokens!(
+            tokens;
+            Tok![BinOp], 0, "&&";
+            Tok![&], 3;
+            Tok![&], 4;
+            Tok![Ident], 5, "x";
+            Tok![&], 7;
+            Tok![&w], 8..10;
+            Tok![BinOp], 11, "&&&";
+            Tok![&], 15;
+            Tok![&], 16;
+            Tok![&], 17;
+            Tok![Ident], 18, "x";
+            Tok![&], 20;
+            Tok![&], 21;
+            Tok![&w], 22..24;
+            Tok![&], 25;
+            Tok![&], 26;
+            Tok![&], 27;
+            Tok![LeftParen], 28;
+            Tok![RightParen], 29;
+            Tok![BinOp], 31, "&&-";
+            Tok![&], 35;
+            Tok![&], 36;
+            Tok![PrefixOp], 37, "-";
+            Tok![Ident], 38, "x";
+            Tok![&], 40;
+            Tok![&w], 41..43;
+            Tok![PrefixOp], 43, "-";
+            Tok![Ident], 44, "x";
+            Tok![BinOp], 46, "&&-&";
+            Tok![&], 51;
+            Tok![&], 52;
+            Tok![PrefixOp], 53, "-";
+            Tok![&], 54;
+            Tok![Ident], 55, "x";
+            Tok![&], 57;
+            Tok![&], 58;
+            Tok![PrefixOp], 59, "-";
+            Tok![&w], 60..62;
+            Tok![&], 63;
+            Tok![PrefixOp], 64, "-";
+            Tok![&], 65;
+            Tok![PrefixOp], 66, "-";
+            Tok![&], 67;
+            Tok![Ident], 68, "x";
         );
     }
 
@@ -1074,46 +1180,23 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Punctuation(Newline), 0;
-            Identifier, 13, "a";
-            Operator, 15, "+";
-            Identifier, 17, "b";
-            Punctuation(Newline), 39;
-            Identifier, 52, "c";
-            Identifier, 100, "d";
-            Punctuation(Newline), 101;
-            Identifier, 114, "e";
-            Identifier, 153, "f";
-            Punctuation(Newline), 154;
-            Identifier, 167, "g";
-            Operator, 169, "+";
-            Punctuation(Newline), 217;
-            Identifier, 230, "h";
-            Operator, 232, "-";
-            Punctuation(Newline), 283;
-        );
-    }
-
-    #[test]
-    fn test_whitespace() {
-        static SOURCE_MANAGER: SourceManager = SourceManager::new("+a-b * c? +\n-d?");
-
-        let tokens = run_lexer(&SOURCE_MANAGER).unwrap();
-
-        assert_all_tokens!(
-            tokens;
-            Operator, 0, "+" => Token::has_only_leading_whitespace;
-            Identifier, 1, "a";
-            Operator, 2, "-" => Token::has_no_whitespace;
-            Identifier, 3, "b";
-            Operator, 5, "*" => Token::is_surrounded_by_whitespace;
-            Identifier, 7, "c";
-            Punctuation(QuestionMark), 8 => Token::has_only_trailing_whitespace;
-            Operator, 10, "+" => Token::is_surrounded_by_whitespace;
-            Punctuation(Newline), 11;
-            Operator, 12, "-" => Token::has_only_leading_whitespace;
-            Identifier, 13, "d";
-            Punctuation(QuestionMark), 14 => Token::has_only_trailing_whitespace;
+            Tok![Newline], 0;
+            Tok![Ident], 13, "a";
+            Tok![BinOp], 15, "+";
+            Tok![Ident], 17, "b";
+            Tok![Newline], 39;
+            Tok![Ident], 52, "c";
+            Tok![Ident], 100, "d";
+            Tok![Newline], 101;
+            Tok![Ident], 114, "e";
+            Tok![Ident], 153, "f";
+            Tok![Newline], 154;
+            Tok![Ident], 167, "g";
+            Tok![BinOp], 169, "+";
+            Tok![Newline], 217;
+            Tok![Ident], 230, "h";
+            Tok![BinOp], 232, "-";
+            Tok![Newline], 283;
         );
     }
 

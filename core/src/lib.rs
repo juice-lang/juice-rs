@@ -3,6 +3,7 @@
 mod char_ext;
 pub mod diag;
 mod option_ext;
+pub mod parser_ext;
 mod peekable_chars;
 
 use std::ops::{ControlFlow, FromResidual, Try};

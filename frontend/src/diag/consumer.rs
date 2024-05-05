@@ -1,7 +1,7 @@
 use std::ops::Try;
 
-use ariadne::{Color, ColorGenerator, Config, IndexType, Label, Report};
-use juice_core::diag::ColorExt as _;
+use ariadne::{Color, Config, IndexType, Label, Report};
+use juice_core::diag::{ColorExt as _, ColorGenerator};
 
 use super::{DiagnosticEngine, DiagnosticReport};
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     Result,
 };
 
-pub trait Consumer<'src, M: SourceManager>: Sized {
+pub trait Consumer<'src, M: 'src + SourceManager>: Sized {
     type Output: Try<Output = ()>;
 
     fn consume<'diag>(
@@ -24,7 +24,7 @@ pub trait Consumer<'src, M: SourceManager>: Sized {
 pub struct DefaultConsumer;
 
 impl DefaultConsumer {
-    fn build_ariadne_report<'src, M: AriadneSourceManager>(
+    fn build_ariadne_report<'src, M: 'src + AriadneSourceManager>(
         &self,
         report: DiagnosticReport<'src, '_, M, Self>,
     ) -> Report<'src, SourceRange<'src, M>> {
@@ -63,7 +63,7 @@ impl DefaultConsumer {
     }
 }
 
-impl<'src, M: AriadneSourceManager> Consumer<'src, M> for DefaultConsumer {
+impl<'src, M: 'src + AriadneSourceManager> Consumer<'src, M> for DefaultConsumer {
     type Output = Result<()>;
 
     fn consume<'diag>(

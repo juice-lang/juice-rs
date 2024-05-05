@@ -8,8 +8,10 @@ string_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum KeywordKind {
         Else = "else",
+        False = "false",
         If = "if",
         Let = "let",
+        True = "true",
         Var = "var",
         While = "while",
     }
@@ -41,106 +43,160 @@ string_enum! {
     }
 }
 
-#[derive_where(Debug, Clone)]
-pub enum TokenKind<'src, M: SourceManager> {
+#[derive_where(Debug, Clone, PartialEq)]
+pub enum TokenKind<'src, M: 'src + SourceManager> {
     Keyword(KeywordKind),
     Punctuation(PunctuationKind),
     Literal(LiteralKind<'src, M>),
     Identifier,
-    Operator,
+    PrefixOperator,
+    PostfixOperator,
+    BinaryOperator,
     Unknown,
 }
 
-#[macro_export]
 macro_rules! keyword_kind {
     ($kind:ident) => {
-        $crate::parser::lexer::TokenKind::Keyword($crate::parser::lexer::token_kind::KeywordKind::$kind)
+        $crate::parser::lexer::TokenKind::Keyword($crate::parser::lexer::KeywordKind::$kind)
     };
 }
 
-#[macro_export]
 macro_rules! punctuation_kind {
     ($kind:ident) => {
-        $crate::parser::lexer::TokenKind::Punctuation($crate::parser::lexer::token_kind::PunctuationKind::$kind)
+        $crate::parser::lexer::TokenKind::Punctuation($crate::parser::lexer::PunctuationKind::$kind)
     };
 }
 
-#[macro_export]
 macro_rules! literal_kind {
-    ($kind:ident) => {
-        $crate::parser::lexer::TokenKind::Literal($crate::parser::lexer::token_kind::LiteralKind::$kind)
+    ($kind:pat_param) => {
+        $crate::parser::lexer::TokenKind::Literal($kind)
     };
 }
 
-#[macro_export]
 macro_rules! Tok {
+    (else) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(Else)
+    };
+    (false) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(False)
+    };
+    (if) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(If)
+    };
+    (let) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(Let)
+    };
+    (true) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(True)
+    };
+    (var) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(Var)
+    };
+    (while) => {
+        $crate::parser::lexer::token_kind::keyword_kind!(While)
+    };
     (Newline) => {
-        $crate::punctuation_kind!(Newline)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Newline)
     };
     (Backtick) => {
-        $crate::punctuation_kind!(Backtick)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Backtick)
     };
     (LeftParen) => {
-        $crate::punctuation_kind!(LeftParen)
+        $crate::parser::lexer::token_kind::punctuation_kind!(LeftParen)
     };
     (RightParen) => {
-        $crate::punctuation_kind!(RightParen)
+        $crate::parser::lexer::token_kind::punctuation_kind!(RightParen)
     };
     (LeftBracket) => {
-        $crate::punctuation_kind!(LeftBracket)
+        $crate::parser::lexer::token_kind::punctuation_kind!(LeftBracket)
     };
     (RightBracket) => {
-        $crate::punctuation_kind!(RightBracket)
+        $crate::parser::lexer::token_kind::punctuation_kind!(RightBracket)
     };
     (LeftBrace) => {
-        $crate::punctuation_kind!(LeftBrace)
+        $crate::parser::lexer::token_kind::punctuation_kind!(LeftBrace)
     };
     (RightBrace) => {
-        $crate::punctuation_kind!(RightBrace)
+        $crate::parser::lexer::token_kind::punctuation_kind!(RightBrace)
     };
     (,) => {
-        $crate::punctuation_kind!(Comma)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Comma)
     };
     (:) => {
-        $crate::punctuation_kind!(Colon)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Colon)
     };
     (;) => {
-        $crate::punctuation_kind!(Semicolon)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Semicolon)
     };
     (@) => {
-        $crate::punctuation_kind!(At)
+        $crate::parser::lexer::token_kind::punctuation_kind!(At)
     };
     (?) => {
-        $crate::punctuation_kind!(QuestionMark)
+        $crate::parser::lexer::token_kind::punctuation_kind!(QuestionMark)
     };
     (.) => {
-        $crate::punctuation_kind!(Dot)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Dot)
     };
     (=) => {
-        $crate::punctuation_kind!(Equals)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Equals)
     };
     (=>) => {
-        $crate::punctuation_kind!(FatArrow)
+        $crate::parser::lexer::token_kind::punctuation_kind!(FatArrow)
     };
     (->) => {
-        $crate::punctuation_kind!(Arrow)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Arrow)
     };
     (&) => {
-        $crate::punctuation_kind!(Ampersand)
+        $crate::parser::lexer::token_kind::punctuation_kind!(Ampersand)
     };
     (&w) => {
-        $crate::punctuation_kind!(AmpersandW)
+        $crate::parser::lexer::token_kind::punctuation_kind!(AmpersandW)
     };
     (#) => {
-        $crate::punctuation_kind!(NumberSign)
+        $crate::parser::lexer::token_kind::punctuation_kind!(NumberSign)
+    };
+    (Int($pat:pat_param, $radix:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Int($pat, $radix))
+    };
+    (Int($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Int($pat, _))
+    };
+    (BigInt($pat:pat_param, $radix:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::BigInt($pat, $radix))
+    };
+    (BigInt($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::BigInt($pat, _))
+    };
+    (Float($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Float($pat))
+    };
+    (Char($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Char($pat))
+    };
+    (String($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::String($pat))
+    };
+    (Interpolation($pat:pat_param)) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::StringInterpolation($pat))
     };
     (Ident) => {
         $crate::parser::lexer::TokenKind::Identifier
     };
-    (Op) => {
-        $crate::parser::lexer::TokenKind::Operator
+    (PrefixOp) => {
+        $crate::parser::lexer::TokenKind::PrefixOperator
+    };
+    (PostfixOp) => {
+        $crate::parser::lexer::TokenKind::PostfixOperator
+    };
+    (BinOp) => {
+        $crate::parser::lexer::TokenKind::BinaryOperator
     };
     (Unknown) => {
         $crate::parser::lexer::TokenKind::Unknown
     };
 }
+
+pub(crate) use keyword_kind;
+pub(crate) use literal_kind;
+pub(crate) use punctuation_kind;
+pub(crate) use Tok;

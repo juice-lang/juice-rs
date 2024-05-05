@@ -1,5 +1,12 @@
-#![feature(assert_matches, iter_advance_by, macro_metavar_expr, try_trait_v2)]
+#![feature(
+    assert_matches,
+    iter_advance_by,
+    macro_metavar_expr,
+    try_trait_v2,
+    type_alias_impl_trait
+)]
 
+mod ast;
 mod diag;
 mod error;
 mod parser;

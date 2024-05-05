@@ -2,13 +2,44 @@ use std::{
     borrow::Cow,
     fmt::{Display, Formatter, Result as FmtResult},
     marker::PhantomData,
-    sync::Arc,
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use ariadne::{Color, Fmt as _, ReportKind};
 
 mod private {
     pub trait Sealed {}
+}
+
+#[derive(Clone, Default)]
+pub struct ColorGenerator {
+    colors: Arc<Mutex<(ariadne::ColorGenerator, Vec<Color>)>>,
+    current: usize,
+}
+
+impl ColorGenerator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_generator(generator: ariadne::ColorGenerator) -> Self {
+        Self {
+            colors: Arc::new(Mutex::new((generator, Vec::new()))),
+            current: 0,
+        }
+    }
+
+    pub fn next(&mut self) -> Color {
+        let mut colors = self.colors.lock().unwrap_or_else(PoisonError::into_inner);
+        while self.current >= colors.1.len() {
+            let color = colors.0.next();
+            colors.1.push(color);
+        }
+
+        let color = colors.1[self.current];
+        self.current += 1;
+        color
+    }
 }
 
 pub trait ColorExt {
