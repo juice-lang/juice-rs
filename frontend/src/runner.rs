@@ -76,11 +76,12 @@ impl Runner {
 
         let expr = parser.parse_expr(&diagnostics)?;
 
-        check_error!(diagnostics);
-
         if let Some(expr) = expr {
             if self.args.action == Action::DumpParse {
                 writeln!(self.args.output_stream, "{}", expr)?;
+
+                check_error!(diagnostics);
+
                 return Ok(true);
             }
         }

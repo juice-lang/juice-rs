@@ -19,8 +19,25 @@ impl<'src, M: 'src + SourceManager> SourceLoc<'src, M> {
         Self { source, offset }
     }
 
-    pub fn to_range(self, len: usize) -> SourceRange<'src, M> {
+    pub fn get_range_with_len(self, len: usize) -> SourceRange<'src, M> {
         SourceRange::new(self.source, self.offset, self.offset + len)
+    }
+
+    pub fn get_range_to(self, end: Self) -> SourceRange<'src, M> {
+        assert_eq!(self.source, end.source);
+
+        SourceRange::new(self.source, self.offset, end.offset)
+    }
+
+    pub fn get_empty_range(self) -> SourceRange<'src, M> {
+        SourceRange::new(self.source, self.offset, self.offset)
+    }
+
+    pub fn get_character_range(self) -> Option<SourceRange<'src, M>> {
+        self.source.get_contents()[self.offset..].chars().next().map(|c| {
+            let end = self.offset + c.len_utf8();
+            SourceRange::new(self.source, self.offset, end)
+        })
     }
 }
 
@@ -68,7 +85,7 @@ impl<M: SourceManager> Debug for SourceLoc<'_, M> {
 impl<M: AriadneSourceManager> Display for SourceLoc<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         if let Some((line, column)) = self.get_line_and_column() {
-            write!(f, "{}:{}:{}", self.source, line, column)
+            write!(f, "{}:{}:{}", self.source, line + 1, column + 1)
         } else {
             write!(f, "({} at offset {})", self.source, self.offset)
         }
@@ -163,12 +180,23 @@ impl<M: AriadneSourceManager> Display for SourceRange<'_, M> {
         ) {
             (Some((start_line, start_column)), Some((end_line, end_column))) => {
                 if start_line == end_line {
-                    write!(f, "{}:{}:{}-{}", self.source, start_line, start_column, end_column)
+                    write!(
+                        f,
+                        "{}:{}:{}-{}",
+                        self.source,
+                        start_line + 1,
+                        start_column + 1,
+                        end_column + 1
+                    )
                 } else {
                     write!(
                         f,
                         "{}:{}:{}-{}:{}",
-                        self.source, start_line, start_column, end_line, end_column
+                        self.source,
+                        start_line + 1,
+                        start_column + 1,
+                        end_line + 1,
+                        end_column + 1
                     )
                 }
             }

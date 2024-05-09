@@ -36,6 +36,7 @@ diagnostic!(
         [error] NewlineInInterpolation => "Newline in string interpolation",
         [error] MultilineStringInInterpolation => "Multiline string literal in string interpolation",
         [error] UnexpectedParserError => "Unexpected parser error",
+        [error] ExpectedExpression(reason: &'static str) => "Expected expression {}",
     }
 
     #[derive(Debug, Clone)]

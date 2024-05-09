@@ -27,7 +27,7 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> BinaryOperatorSequenceExpr<'src, M> {
+impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         let mut list = Vec::with_capacity(self.rest.len() * 2 + 1);
 
@@ -35,7 +35,7 @@ impl<'src, M: SourceManager> BinaryOperatorSequenceExpr<'src, M> {
 
         list.extend(self.rest.iter().flat_map(|(op_range, expr)| {
             [
-                Dump::new("OperatorPart").with_field("operator", *op_range),
+                Dump::new("OperatorPart").with_field("operator", op_range.get_str()),
                 Dump::new("ExprPart").with_field("expr", expr.get_dump()),
             ]
         }));
@@ -61,10 +61,10 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> BinaryOperatorExpr<'src, M> {
+impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         Dump::new("BinaryOperatorExpr")
-            .with_field("operator", self.op_range)
+            .with_field("operator", self.op_range.get_str())
             .with_field("lhs", self.lhs.get_dump())
             .with_field("rhs", self.rhs.get_dump())
     }
@@ -87,7 +87,7 @@ impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> UnaryOperatorExpr<'src, M> {
+impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         let name = if self.is_prefix {
             "PrefixOperatorExpr"
@@ -96,7 +96,7 @@ impl<'src, M: SourceManager> UnaryOperatorExpr<'src, M> {
         };
 
         Dump::new(name)
-            .with_field("operator", self.op_range)
+            .with_field("operator", self.op_range.get_str())
             .with_field("operand", self.operand.get_dump())
     }
 }
@@ -116,7 +116,7 @@ impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
     }
 }
 
-impl<'src, M: SourceManager> BorrowExpr<'src, M> {
+impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         Dump::new("BorrowExpr")
             .with_field("is_mutable", self.is_mutable)
@@ -146,7 +146,7 @@ pub enum LiteralExpr<'src, M: 'src + SourceManager> {
     StringInterpolation(Arc<[InterpolationExprPart<'src, M>]>),
 }
 
-impl<'src, M: SourceManager> LiteralExpr<'src, M> {
+impl<'src, M: 'src + SourceManager> LiteralExpr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         match self {
             Self::Bool(v) => Dump::new("BoolExpr").with_field("value", *v),
@@ -186,7 +186,7 @@ pub enum ExprKind<'src, M: 'src + SourceManager> {
     Error,
 }
 
-impl<'src, M: SourceManager> ExprKind<'src, M> {
+impl<'src, M: 'src + SourceManager> ExprKind<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         match self {
             ExprKind::BinaryOperatorSequence(expr) => expr.get_dump(),
@@ -234,7 +234,9 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
 
         Self::new(kind, source_range)
     }
+}
 
+impl<'src, M: 'src + SourceManager> Expr<'src, M> {
     fn get_dump(&self) -> Dump<'src> {
         self.kind.get_dump()
     }

@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use ariadne::Color;
+use ariadne::{Color, Fmt as _};
 use itertools::Itertools as _;
 use juice_core::diag::DiagnosticArg;
 
@@ -65,8 +65,8 @@ impl Display for TokenKindArg {
 }
 
 impl DiagnosticArg for TokenKindArg {
-    fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
-        self
+    fn with_color(self, color: impl Into<Option<Color>>) -> impl Display {
+        self.fg(color)
     }
 }
 
@@ -95,7 +95,14 @@ impl Display for TokenKindListArg {
 }
 
 impl DiagnosticArg for TokenKindListArg {
-    fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
-        self
+    fn with_color(self, color: impl Into<Option<Color>>) -> impl Display {
+        let color = color.into();
+
+        format!(
+            "[{}]",
+            self.token_kinds
+                .into_iter()
+                .format_with(", ", |arg, f| f(&arg.with_color(color)))
+        )
     }
 }

@@ -127,6 +127,8 @@ impl<'src> Dump<'src> {
         for (i, (name, field)) in self.fields.iter().enumerate() {
             if is_multiline {
                 write!(f, "\n{}  ", indent_str)?;
+            } else if i > 0 {
+                write!(f, " ")?;
             }
 
             write!(f, "{} ", format!("{}:", name).fg(color))?;

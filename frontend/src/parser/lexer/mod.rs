@@ -1,3 +1,4 @@
+mod error;
 pub mod literal;
 pub mod token;
 pub mod token_kind;
@@ -6,6 +7,7 @@ use std::num::NonZero;
 
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
+use self::error::{ErrorBuilder, PendingError};
 pub(crate) use self::token_kind::Tok;
 pub use self::{
     literal::LiteralKind,
@@ -19,116 +21,6 @@ use crate::{
     source_manager::{Source, SourceManager},
     Result,
 };
-
-#[derive(Debug, Clone)]
-struct PendingError<'src, M: 'src + SourceManager> {
-    source_loc: SourceLoc<'src, M>,
-    diagnostic: Diagnostic<'src>,
-    initial_context_note: DiagnosticContextNote<'src>,
-    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
-    note: Option<DiagnosticNote<'src>>,
-}
-
-#[must_use = "Errors must be recorded to be diagnosed"]
-struct ErrorBuilder<'src, 'lex, M: 'src + SourceManager>
-where
-    'src: 'lex,
-{
-    source_loc: Result<(SourceRange<'src, M>, bool), SourceLoc<'src, M>>,
-    diagnostic: Diagnostic<'src>,
-    initial_context_note: DiagnosticContextNote<'src>,
-    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
-    note: Option<DiagnosticNote<'src>>,
-    lexer: &'lex mut Lexer<'src, M>,
-}
-
-impl<'src, 'lex, M: 'src + SourceManager> ErrorBuilder<'src, 'lex, M> {
-    fn new_with_range(
-        source_range: SourceRange<'src, M>,
-        at_end: bool,
-        diagnostic: Diagnostic<'src>,
-        context_note: DiagnosticContextNote<'src>,
-        lexer: &'lex mut Lexer<'src, M>,
-    ) -> Self {
-        Self {
-            source_loc: Ok((source_range, at_end)),
-            diagnostic,
-            initial_context_note: context_note,
-            context_notes: Vec::new(),
-            note: None,
-            lexer,
-        }
-    }
-
-    fn new_with_loc(
-        source_loc: SourceLoc<'src, M>,
-        diagnostic: Diagnostic<'src>,
-        context_note: DiagnosticContextNote<'src>,
-        lexer: &'lex mut Lexer<'src, M>,
-    ) -> Self {
-        Self {
-            source_loc: Err(source_loc),
-            diagnostic,
-            initial_context_note: context_note,
-            context_notes: Vec::new(),
-            note: None,
-            lexer,
-        }
-    }
-
-    fn with_context_note(
-        mut self,
-        source_range: SourceRange<'src, M>,
-        context_note: DiagnosticContextNote<'src>,
-    ) -> Self {
-        self.context_notes.push((source_range, context_note));
-        self
-    }
-
-    fn with_note(mut self, note: DiagnosticNote<'src>) -> Self {
-        self.note = Some(note);
-        self
-    }
-
-    fn record(self) {
-        let Self {
-            source_loc,
-            diagnostic,
-            initial_context_note,
-            context_notes,
-            note,
-            lexer,
-        } = self;
-
-        match source_loc {
-            Ok((source_range, at_end)) => {
-                let source_loc = if at_end {
-                    if let Some(c) = source_range.get_str().chars().last() {
-                        source_range.source.get_loc(source_range.end - c.len_utf8())
-                    } else {
-                        source_range.start_loc()
-                    }
-                } else {
-                    source_range.start_loc()
-                };
-
-                let mut context_notes = context_notes;
-                context_notes.push((source_range, initial_context_note));
-
-                let error = Error::new(source_loc, diagnostic, context_notes, note);
-
-                lexer.errors.push(error);
-            }
-            Err(source_loc) => lexer.pending_errors.push(PendingError {
-                source_loc,
-                diagnostic,
-                initial_context_note,
-                context_notes,
-                note,
-            }),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Lexer<'src, M: 'src + SourceManager> {
@@ -470,17 +362,10 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
 
         let op = self.get_current_range().get_str();
 
-        match (has_leading_whitespace, has_trailing_whitespace) {
-            (true, false) => Tok![PrefixOp(op)],
-            (false, true) => Tok![PostfixOp(op)],
-            (true, true) => Tok![BinOp(op)],
-            (false, false) => {
-                if next_is_dot {
-                    Tok![PostfixOp(op)]
-                } else {
-                    Tok![BinOp(op)]
-                }
-            }
+        match (has_leading_whitespace, has_trailing_whitespace, next_is_dot) {
+            (true, false, _) => Tok![PrefixOp(op)],
+            (false, true, _) | (false, false, true) => Tok![PostfixOp(op)],
+            _ => Tok![BinOp(op)],
         }
     }
 
@@ -599,7 +484,7 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
     }
 
     fn get_next_character_range(&self, c: char) -> SourceRange<'src, M> {
-        self.source.get_range(self.current, self.current + c.len_utf8())
+        self.get_current_loc().get_range_with_len(c.len_utf8())
     }
 
     fn get_leading_whitespace_range(&self) -> SourceRange<'src, M> {

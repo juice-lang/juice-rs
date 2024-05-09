@@ -22,6 +22,8 @@ diagnostic_note!(
         EscapeSequenceLocation => "Escape sequence is here",
         UnicodeEscapeLocation => "Unicode escape is here",
         UnexpectedParserErrorLocation => "Parser error generated here",
+        ExpectedExpressionLocation => "Expression expected here",
+        BinaryOperatorLocation => "Binary operator is here",
     }
 );
 
@@ -43,6 +45,6 @@ diagnostic_note!(
         InsufficientIndentation =>
             "The indentation of the last line gets stripped from all other lines in multiline string literals",
         UnexpectedParserError(expected: into TokenKindListArg, found: into TokenKindArg) =>
-            "Expected one of the following tokens: {}, but found `{}`",
+            "Expected one of the following tokens: {}, but found {}",
     }
 );

@@ -69,7 +69,7 @@ impl Radix {
 #[derive_where(Debug, Clone)]
 pub enum InterpolationPart<'src, M: 'src + SourceManager> {
     String(Arc<str>),
-    Interpolation(Arc<[Token<'src, M>]>),
+    Interpolation(Arc<[Token<'src, M>]>, SourceRange<'src, M>),
 }
 
 #[derive_where(Debug, Clone)]
@@ -458,7 +458,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
                 content: String,
                 newline_locations: Vec<(usize, SourceLoc<'src, M>)>,
             },
-            Interpolation(Arc<[Token<'src, M>]>),
+            Interpolation(Arc<[Token<'src, M>]>, SourceRange<'src, M>),
         }
 
         if is_multiline && lexer.in_interpolation {
@@ -590,6 +590,8 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
                 '$' if raw_level.is_none() && !recovering_character && lexer.peek2() == Some('{') => {
                     lexer.advance_by(2).expect("Should be able to advance by 2");
 
+                    let start_loc = lexer.get_current_loc();
+
                     let content = std::mem::take(&mut current_content);
                     let newline_locations = std::mem::take(&mut current_newline_locations);
                     parts.push(Part::String {
@@ -599,7 +601,9 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
 
                     let tokens = lexer.with_interpolation(|nested_lexer| nested_lexer.collect());
 
-                    parts.push(Part::Interpolation(tokens));
+                    let interpolation_range = start_loc.get_range_to(lexer.get_current_loc() - 1);
+
+                    parts.push(Part::Interpolation(tokens, interpolation_range));
                 }
                 _ => {
                     lexer.advance();
@@ -612,7 +616,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
             let indentation = current_newline_locations.last().and_then(|(index, loc)| {
                 let last_line = &current_content[*index..];
                 if !last_line.is_empty() && last_line.chars().all(|c| matches!(c, ' ' | '\t')) {
-                    Some(loc.to_range(last_line.len()))
+                    Some(loc.get_range_with_len(last_line.len()))
                 } else {
                     None
                 }
@@ -645,7 +649,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
 
                             InterpolationPart::String(content)
                         }
-                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
+                        Part::Interpolation(tokens, range) => InterpolationPart::Interpolation(tokens, range),
                     })
                     .collect()
             } else {
@@ -653,7 +657,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
                     .into_iter()
                     .map(|part| match part {
                         Part::String { content, .. } => InterpolationPart::String(Arc::from(content)),
-                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
+                        Part::Interpolation(tokens, range) => InterpolationPart::Interpolation(tokens, range),
                     })
                     .collect()
             };
@@ -686,7 +690,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
                     .into_iter()
                     .map(|part| match part {
                         Part::String { content, .. } => InterpolationPart::String(Arc::from(content)),
-                        Part::Interpolation(tokens) => InterpolationPart::Interpolation(tokens),
+                        Part::Interpolation(tokens, range) => InterpolationPart::Interpolation(tokens, range),
                     })
                     .chain(Some(InterpolationPart::String(last_content)))
                     .filter_map(|part| {
@@ -732,7 +736,7 @@ impl<'src, M: 'src + SourceManager> LiteralKind<'src, M> {
                     Diagnostic::insufficient_indentation(),
                     DiagnosticContextNote::containing_literal_location(),
                 )
-                .with_context_note(loc.to_range(1), DiagnosticContextNote::line_start_location())
+                .with_context_note(loc.get_range_with_len(1), DiagnosticContextNote::line_start_location())
                 .with_context_note(indentation, DiagnosticContextNote::indentation_location())
                 .with_note(DiagnosticNote::insufficient_indentation())
                 .record();
@@ -1280,20 +1284,20 @@ mod tests {
                 parts.as_ref(),
                 [
                     InterpolationPart::String(s),
-                    InterpolationPart::Interpolation(inner_tokens),
+                    InterpolationPart::Interpolation(inner_tokens, range),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
                         Tok![Ident("world")], 23..28;
                     );
-                    s.as_ref() == "hello, "
+                    s.as_ref() == "hello, " && range.start == 23 && range.end == 28
                 }
             ), 13..30;
             Tok![Interpolation(parts)] if matches!(
                 parts.as_ref(),
                 [
-                    InterpolationPart::Interpolation(inner_tokens_1),
-                    InterpolationPart::Interpolation(inner_tokens_2),
+                    InterpolationPart::Interpolation(inner_tokens_1, range_1),
+                    InterpolationPart::Interpolation(inner_tokens_2, range_2),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens_1;
@@ -1305,27 +1309,27 @@ mod tests {
                         inner_tokens_2;
                         Tok![Ident("c")], 42;
                     );
-                    true
+                    range_1.start == 34 && range_1.end == 39 && range_2.start == 42 && range_2.end == 43
                 }
             ), 31..45;
             Tok![Newline], 45;
             Tok![Interpolation(parts)] if matches!(
                 parts.as_ref(),
-                [InterpolationPart::Interpolation(inner_tokens)] if {
+                [InterpolationPart::Interpolation(inner_tokens, range)] if {
                     assert_all_tokens!(
                         inner_tokens;
                         Tok![Interpolation(parts)] if matches!(
                             parts.as_ref(),
-                            [InterpolationPart::Interpolation(inner_inner_tokens)] if {
+                            [InterpolationPart::Interpolation(inner_inner_tokens, inner_range)] if {
                                 assert_all_tokens!(
                                     inner_inner_tokens;
                                     Tok![Ident("a")], 64;
                                 );
-                                true
+                                inner_range.start == 64 && inner_range.end == 65
                             }
                         ), 61..67;
                     );
-                    true
+                    range.start == 61 && range.end == 67
                 }
             ), 58..69;
             Tok![Newline], 69;
@@ -1333,13 +1337,13 @@ mod tests {
                 parts.as_ref(),
                 [
                     InterpolationPart::String(s),
-                    InterpolationPart::Interpolation(inner_tokens),
+                    InterpolationPart::Interpolation(inner_tokens, range),
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
                         Tok![Ident("world")], 108..113;
                     );
-                    s.as_ref() == "hello$, "
+                    s.as_ref() == "hello$, " && range.start == 108 && range.end == 113
                 }
             ), 82..130;
             Tok![Newline], 130;

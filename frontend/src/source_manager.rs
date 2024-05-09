@@ -180,6 +180,17 @@ impl<'src, M: 'src + SourceManager> Source<'src, M> {
         SourceRange::new(*self, start, end)
     }
 
+    pub fn get_last_range(&self) -> SourceRange<'src, M> {
+        let contents = self.get_contents();
+
+        let Some(c) = contents.chars().last() else {
+            return self.get_eof_range();
+        };
+
+        let end = contents.len();
+        SourceRange::new(*self, end - c.len_utf8(), end)
+    }
+
     pub fn get_eof_range(&self) -> SourceRange<'src, M> {
         let contents = self.get_contents();
         let end = contents.len();
