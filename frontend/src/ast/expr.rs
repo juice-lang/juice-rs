@@ -3,18 +3,10 @@ use std::{
     sync::Arc,
 };
 
-use ariadne::{Color, Fmt as _};
 use derive_where::derive_where;
-use juice_core::diag::{ColorExt as _, ColorGenerator};
-use thousands::{digits::ASCII_HEXADECIMAL, Separable as _, SeparatorPolicy};
 
+use super::dump::Dump;
 use crate::{source_loc::SourceRange, source_manager::SourceManager};
-
-const UNDERSCORE_HEX_SEPARATOR: SeparatorPolicy = SeparatorPolicy {
-    separator: "_",
-    groups: &[4],
-    digits: ASCII_HEXADECIMAL,
-};
 
 #[derive_where(Debug, Clone)]
 pub struct BinaryOperatorSequenceExpr<'src, M: 'src + SourceManager> {
@@ -33,51 +25,22 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
     pub fn push(&mut self, op_range: SourceRange<'src, M>, expr: Expr<'src, M>) {
         self.rest.push((op_range, expr));
     }
+}
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
-        let color = colors.next();
-        let indent_str = " ".repeat(indentation * 4);
+impl<'src, M: SourceManager> BinaryOperatorSequenceExpr<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
+        let mut list = Vec::with_capacity(self.rest.len() * 2 + 1);
 
-        let part_color = colors.next();
+        list.push(Dump::new("ExprPart").with_field("expr", self.first.get_dump()));
 
-        write!(
-            f,
-            "{0}\n{1}  {2} [\n{1}    {3}\n{1}      {4} ",
-            "BinaryOperatorSequenceExpr(".fg(color),
-            indent_str,
-            "parts:".fg(color),
-            "ExprPart(".fg(part_color),
-            "expr:".fg(part_color),
-        )?;
+        list.extend(self.rest.iter().flat_map(|(op_range, expr)| {
+            [
+                Dump::new("OperatorPart").with_field("operator", *op_range),
+                Dump::new("ExprPart").with_field("expr", expr.get_dump()),
+            ]
+        }));
 
-        self.first.kind.display(f, indentation + 2, colors.clone())?;
-
-        writeln!(f, "{}    {},", indent_str, ")".fg(part_color))?;
-
-        for (op_range, expr) in &self.rest {
-            writeln!(
-                f,
-                "{}    {} {:?}{},",
-                indent_str,
-                "OperatorPart(operator:".fg(part_color),
-                op_range.get_str(),
-                ")".fg(part_color)
-            )?;
-
-            write!(
-                f,
-                "{0}    {1}\n{0}      {2} ",
-                indent_str,
-                "ExprPart(".fg(part_color),
-                "expr:".fg(part_color)
-            )?;
-
-            expr.kind.display(f, indentation + 2, colors.clone())?;
-
-            writeln!(f, "{}    {},", indent_str, ")".fg(part_color))?;
-        }
-
-        writeln!(f, "{0}  ]\n{0}{1}", indent_str, ")".fg(color))
+        Dump::new("BinaryOperatorSequenceExpr").with_field("parts", list)
     }
 }
 
@@ -96,28 +59,14 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
             rhs: Box::new(rhs),
         }
     }
+}
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
-        let color = colors.next();
-        let indent_str = " ".repeat(indentation * 4);
-
-        write!(
-            f,
-            "{0}\n{1}  {2} {3:?}\n{1}  {4} ",
-            "BinaryOperatorExpr(".fg(color),
-            indent_str,
-            "operator:".fg(color),
-            self.op_range.get_str(),
-            "lhs:".fg(color),
-        )?;
-
-        self.lhs.kind.display(f, indentation + 1, colors.clone())?;
-
-        write!(f, "{}  {} ", indent_str, "rhs:".fg(color))?;
-
-        self.rhs.kind.display(f, indentation + 1, colors)?;
-
-        writeln!(f, "{}{}", indent_str, ")".fg(color))
+impl<'src, M: SourceManager> BinaryOperatorExpr<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
+        Dump::new("BinaryOperatorExpr")
+            .with_field("operator", self.op_range)
+            .with_field("lhs", self.lhs.get_dump())
+            .with_field("rhs", self.rhs.get_dump())
     }
 }
 
@@ -136,27 +85,19 @@ impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
             is_prefix,
         }
     }
+}
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
-        let color = colors.next();
-        let indent_str = " ".repeat(indentation * 4);
+impl<'src, M: SourceManager> UnaryOperatorExpr<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
+        let name = if self.is_prefix {
+            "PrefixOperatorExpr"
+        } else {
+            "PostfixOperatorExpr"
+        };
 
-        let name = if self.is_prefix { "Prefix" } else { "Postfix" };
-
-        write!(
-            f,
-            "{0}{1}\n{2}  {3} {4:?}\n{2}  {5} ",
-            name.fg(color),
-            "OperatorExpr(".fg(color),
-            indent_str,
-            "operator:".fg(color),
-            self.op_range.get_str(),
-            "operand:".fg(color),
-        )?;
-
-        self.operand.kind.display(f, indentation + 1, colors)?;
-
-        writeln!(f, "{}{}", indent_str, ")".fg(color))
+        Dump::new(name)
+            .with_field("operator", self.op_range)
+            .with_field("operand", self.operand.get_dump())
     }
 }
 
@@ -173,24 +114,13 @@ impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
             is_mutable,
         }
     }
+}
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
-        let color = colors.next();
-        let indent_str = " ".repeat(indentation * 4);
-
-        write!(
-            f,
-            "{0}\n{1}  {2} {3}\n{1}  {4} ",
-            "BorrowExpr(".fg(color),
-            indent_str,
-            "is_mutable:".fg(color),
-            self.is_mutable,
-            "expr:".fg(color),
-        )?;
-
-        self.expr.kind.display(f, indentation + 1, colors)?;
-
-        writeln!(f, "{}{}", indent_str, ")".fg(color))
+impl<'src, M: SourceManager> BorrowExpr<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
+        Dump::new("BorrowExpr")
+            .with_field("is_mutable", self.is_mutable)
+            .with_field("expr", self.expr.get_dump())
     }
 }
 
@@ -216,79 +146,29 @@ pub enum LiteralExpr<'src, M: 'src + SourceManager> {
     StringInterpolation(Arc<[InterpolationExprPart<'src, M>]>),
 }
 
-impl<M: SourceManager> LiteralExpr<'_, M> {
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
-        let color = colors.next();
-        let indent_str = " ".repeat(indentation * 4);
-
+impl<'src, M: SourceManager> LiteralExpr<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
         match self {
-            Self::Bool(value) => writeln!(f, "{} {}{}", "BoolExpr(value:".fg(color), value, ")".fg(color)),
-            Self::Int(IntLiteralExpr::Int(value)) => {
-                writeln!(f, "{} {}{}", "IntExpr(value:".fg(color), value, ")".fg(color))
-            }
-            Self::Int(IntLiteralExpr::BigInt(value)) => {
-                let (last, rest) = value.split_last().unwrap();
-
-                write!(
-                    f,
-                    "{}\n{}  {} 0x{}_",
-                    "IntExpr(".fg(color),
-                    indent_str,
-                    "value:".fg(color),
-                    last.separate_by_policy(UNDERSCORE_HEX_SEPARATOR)
-                )?;
-
-                for part in rest.iter().rev() {
-                    write!(
-                        f,
-                        "{}",
-                        format!("{:016x}", part).separate_by_policy(UNDERSCORE_HEX_SEPARATOR)
-                    )?;
-                }
-
-                writeln!(f, "{}{}", indent_str, ")".fg(color))
-            }
-            Self::Float(value) => writeln!(f, "{} {}{}", "FloatExpr(value:".fg(color), value, ")".fg(color)),
-            Self::Char(value) => writeln!(f, "{} '{}'{}", "CharExpr(value:".fg(color), value, ")".fg(color)),
-            Self::String(value) => writeln!(f, "{} {:?}{}", "StringExpr(value:".fg(color), value, ")".fg(color)),
+            Self::Bool(v) => Dump::new("BoolExpr").with_field("value", *v),
+            Self::Int(IntLiteralExpr::Int(v)) => Dump::new("IntExpr").with_field("value", *v),
+            Self::Int(IntLiteralExpr::BigInt(v)) => Dump::new("IntExpr").with_field("value", v.clone()),
+            Self::Float(v) => Dump::new("FloatExpr").with_field("value", *v),
+            Self::Char(c) => Dump::new("CharExpr").with_field("value", *c),
+            Self::String(s) => Dump::new("StringExpr").with_field("value", s.clone()),
             Self::StringInterpolation(parts) => {
-                writeln!(
-                    f,
-                    "{}\n{}  {} [",
-                    "StringInterpolationExpr(".fg(color),
-                    indent_str,
-                    "parts:".fg(color)
-                )?;
-
-                let part_color = colors.next();
-
+                let mut list = Vec::new();
                 for part in parts.as_ref() {
-                    match part {
-                        InterpolationExprPart::String(s) => {
-                            writeln!(
-                                f,
-                                "{}    {} {:?}{},",
-                                indent_str,
-                                "StringPart(value:".fg(part_color),
-                                s,
-                                ")".fg(part_color)
-                            )?;
-                        }
+                    let dump = match part {
+                        InterpolationExprPart::String(s) => Dump::new("StringPart").with_field("value", s.clone()),
                         InterpolationExprPart::Interpolation(expr) => {
-                            write!(
-                                f,
-                                "{0}    {1}\n{0}      {2} ",
-                                indent_str,
-                                "InterpolationPart(".fg(part_color),
-                                "expr:".fg(part_color)
-                            )?;
-                            expr.kind.display(f, indentation + 2, colors.clone())?;
-                            writeln!(f, "{}    {},", indent_str, ")".fg(part_color))?;
+                            Dump::new("InterpolationPart").with_field("expr", expr.get_dump())
                         }
-                    }
+                    };
+
+                    list.push(dump);
                 }
 
-                writeln!(f, "{0}  ]\n{0}{1}", indent_str, ")".fg(color))
+                Dump::new("StringInterpolationExpr").with_field("parts", list)
             }
         }
     }
@@ -306,26 +186,17 @@ pub enum ExprKind<'src, M: 'src + SourceManager> {
     Error,
 }
 
-impl<M: SourceManager> ExprKind<'_, M> {
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
+impl<'src, M: SourceManager> ExprKind<'src, M> {
+    fn get_dump(&self) -> Dump<'src> {
         match self {
-            Self::BinaryOperatorSequence(expr) => expr.display(f, indentation, colors),
-            Self::BinaryOperator(expr) => expr.display(f, indentation, colors),
-            Self::UnaryOperator(expr) => expr.display(f, indentation, colors),
-            Self::Borrow(expr) => expr.display(f, indentation, colors),
-            Self::Literal(expr) => expr.display(f, indentation, colors),
-            Self::Identifier(range) => {
-                let color = colors.next();
-                writeln!(
-                    f,
-                    "{} {:?}{}",
-                    "IdentifierExpr(ident:".fg(color),
-                    range.get_str(),
-                    ")".fg(color)
-                )
-            }
-            Self::Grouping(expr) => expr.kind.display(f, indentation, colors),
-            Self::Error => writeln!(f, "{}", "ErrorExpr()".fg(Color::error_color())),
+            ExprKind::BinaryOperatorSequence(expr) => expr.get_dump(),
+            ExprKind::BinaryOperator(expr) => expr.get_dump(),
+            ExprKind::UnaryOperator(expr) => expr.get_dump(),
+            ExprKind::Borrow(expr) => expr.get_dump(),
+            ExprKind::Literal(expr) => expr.get_dump(),
+            ExprKind::Identifier(range) => Dump::new("IdentifierExpr").with_field("ident", range.get_str()),
+            ExprKind::Grouping(expr) => expr.get_dump(),
+            ExprKind::Error => Dump::new_error("ErrorExpr"),
         }
     }
 }
@@ -333,6 +204,7 @@ impl<M: SourceManager> ExprKind<'_, M> {
 #[derive_where(Debug, Clone)]
 pub struct Expr<'src, M: 'src + SourceManager> {
     pub kind: ExprKind<'src, M>,
+    #[allow(dead_code)]
     pub source_range: SourceRange<'src, M>,
 }
 
@@ -362,10 +234,14 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
 
         Self::new(kind, source_range)
     }
+
+    fn get_dump(&self) -> Dump<'src> {
+        self.kind.get_dump()
+    }
 }
 
 impl<M: SourceManager> Display for Expr<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        self.kind.display(f, 0, ColorGenerator::default())
+        write!(f, "{}", self.get_dump())
     }
 }

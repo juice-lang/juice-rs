@@ -1,6 +1,8 @@
 use juice_core::diag::{Colored, PrefixedWithArticle};
 use juice_macros::diagnostic_note;
 
+use super::arg::{TokenKindArg, TokenKindListArg};
+
 diagnostic_note!(
     #[derive(Debug, Clone)]
     pub enum DiagnosticContextNote<'src> {
@@ -19,6 +21,7 @@ diagnostic_note!(
         UnterminatedLiteralLocation => "This literal is unterminated",
         EscapeSequenceLocation => "Escape sequence is here",
         UnicodeEscapeLocation => "Unicode escape is here",
+        UnexpectedParserErrorLocation => "Parser error generated here",
     }
 );
 
@@ -38,6 +41,8 @@ diagnostic_note!(
             "Only multiline string literals (delimited by `{}`) can contain newlines, use `{}` instead",
         NewlineInInterpolation => "Consider introducing a variable for complex interpolated expressions",
         InsufficientIndentation =>
-            "The indentation of the last line gets stripped from all other lines in multiline string literals"
+            "The indentation of the last line gets stripped from all other lines in multiline string literals",
+        UnexpectedParserError(expected: into TokenKindListArg, found: into TokenKindArg) =>
+            "Expected one of the following tokens: {}, but found `{}`",
     }
 );

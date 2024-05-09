@@ -9,6 +9,7 @@ use crate::{source_loc::SourceRange, source_manager::SourceManager};
 pub struct Token<'src, M: 'src + SourceManager> {
     pub kind: TokenKind<'src, M>,
     pub source_range: SourceRange<'src, M>,
+    #[allow(dead_code)]
     pub leading_whitespace_range: SourceRange<'src, M>,
 }
 

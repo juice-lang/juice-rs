@@ -4,14 +4,9 @@ use std::{
     path::PathBuf,
 };
 
-use chumsky::{
-    input::{Input as _, Stream},
-    Parser as _,
-};
-
 use crate::{
     diag::DiagnosticEngine,
-    parser::{expr_parser, Lexer},
+    parser::Parser,
     source_manager::{DefaultSourceManager, SourceManager},
     Result,
 };
@@ -77,26 +72,19 @@ impl Runner {
 
         let source = source_manager.get_main_source();
 
-        let mut lexer = Lexer::new(source);
+        let mut parser = Parser::new(source);
 
-        let parser_input = Stream::from_iter((&mut lexer).map(|t| (t.kind, t.source_range)))
-            .boxed()
-            .spanned(source.get_eof_range());
+        let expr = parser.parse_expr(&diagnostics)?;
 
-        let (ast, errors) = expr_parser().parse(parser_input).into_output_errors();
+        check_error!(diagnostics);
 
-        lexer.diagnose_errors(&diagnostics)?;
-
-        println!("{:?}", errors);
-
-        if let Some(ast) = ast {
+        if let Some(expr) = expr {
             if self.args.action == Action::DumpParse {
-                writeln!(self.args.output_stream, "{}", ast)?;
+                writeln!(self.args.output_stream, "{}", expr)?;
                 return Ok(true);
             }
         }
 
-        check_error!(diagnostics);
-        Ok(true)
+        Ok(false)
     }
 }

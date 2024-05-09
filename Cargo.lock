@@ -578,6 +578,7 @@ dependencies = [
  "chumsky",
  "derive-where",
  "derive_more",
+ "itertools",
  "juice-core",
  "juice-macros",
  "lasso",

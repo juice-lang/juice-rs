@@ -10,6 +10,7 @@ ariadne = { workspace = true }
 chumsky = { workspace = true }
 derive-where = "1.2.7"
 derive_more = { workspace = true }
+itertools = { workspace = true }
 juice-core = { workspace = true }
 juice-macros = { workspace = true }
 lasso = "0.7.2"

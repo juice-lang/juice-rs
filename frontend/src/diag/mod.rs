@@ -1,3 +1,4 @@
+mod arg;
 mod consumer;
 mod diagnostic;
 mod diagnostic_note;

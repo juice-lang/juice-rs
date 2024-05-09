@@ -48,10 +48,10 @@ pub enum TokenKind<'src, M: 'src + SourceManager> {
     Keyword(KeywordKind),
     Punctuation(PunctuationKind),
     Literal(LiteralKind<'src, M>),
-    Identifier,
-    PrefixOperator,
-    PostfixOperator,
-    BinaryOperator,
+    Identifier(&'src str),
+    PrefixOperator(&'src str),
+    PostfixOperator(&'src str),
+    BinaryOperator(&'src str),
     Unknown,
 }
 
@@ -155,41 +155,41 @@ macro_rules! Tok {
     (#) => {
         $crate::parser::lexer::token_kind::punctuation_kind!(NumberSign)
     };
-    (Int($pat:pat_param, $radix:pat_param)) => {
+    (Int($pat:tt, $radix:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Int($pat, $radix))
     };
-    (Int($pat:pat_param)) => {
+    (Int($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Int($pat, _))
     };
-    (BigInt($pat:pat_param, $radix:pat_param)) => {
+    (BigInt($pat:tt, $radix:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::BigInt($pat, $radix))
     };
-    (BigInt($pat:pat_param)) => {
+    (BigInt($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::BigInt($pat, _))
     };
-    (Float($pat:pat_param)) => {
+    (Float($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Float($pat))
     };
-    (Char($pat:pat_param)) => {
+    (Char($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::Char($pat))
     };
-    (String($pat:pat_param)) => {
+    (String($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::String($pat))
     };
-    (Interpolation($pat:pat_param)) => {
+    (Interpolation($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::StringInterpolation($pat))
     };
-    (Ident) => {
-        $crate::parser::lexer::TokenKind::Identifier
+    (Ident($pat:tt)) => {
+        $crate::parser::lexer::TokenKind::Identifier($pat)
     };
-    (PrefixOp) => {
-        $crate::parser::lexer::TokenKind::PrefixOperator
+    (PrefixOp($pat:tt)) => {
+        $crate::parser::lexer::TokenKind::PrefixOperator($pat)
     };
-    (PostfixOp) => {
-        $crate::parser::lexer::TokenKind::PostfixOperator
+    (PostfixOp($pat:tt)) => {
+        $crate::parser::lexer::TokenKind::PostfixOperator($pat)
     };
-    (BinOp) => {
-        $crate::parser::lexer::TokenKind::BinaryOperator
+    (BinOp($pat:tt)) => {
+        $crate::parser::lexer::TokenKind::BinaryOperator($pat)
     };
     (Unknown) => {
         $crate::parser::lexer::TokenKind::Unknown

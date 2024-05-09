@@ -29,6 +29,7 @@ impl<'src, M: 'src + SourceManager, C: DiagnosticConsumer<'src, M>> Engine<'src,
         &self.consumer
     }
 
+    #[allow(dead_code)]
     pub fn into_consumer(self) -> C {
         self.consumer
     }
@@ -100,7 +101,7 @@ where
         self
     }
 
-    pub fn diagnose(self) -> C::Output {
+    pub fn diagnose(self) -> Result<(), C::Error> {
         let engine = self.engine;
 
         if self.diagnostic.get_kind().is_error() {

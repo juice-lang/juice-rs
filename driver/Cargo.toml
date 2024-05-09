@@ -18,7 +18,7 @@ tokio = { version = "1.36.0", features = ["full"] }
 which = "6.0.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-itertools = "0.12.1"
+itertools = { workspace = true }
 
 [[bin]]
 name = "juice"

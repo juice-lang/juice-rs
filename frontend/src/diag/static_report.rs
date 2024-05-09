@@ -14,6 +14,7 @@ impl<'src> StaticReport<'src> {
         Self { diagnostic, note: None }
     }
 
+    #[allow(dead_code)]
     pub fn with_note(mut self, note: DiagnosticNote<'src>) -> Self {
         self.note = Some(note);
         self

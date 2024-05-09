@@ -18,6 +18,7 @@ pub trait SourceManager: private::SourceManager + Debug + Send + Sync + Sized {
     type Index;
     type Output<T>;
 
+    #[allow(dead_code)]
     fn get_source(&mut self, index: Self::Index) -> Self::Output<Source<Self>>;
     fn get_main_source(&self) -> Source<Self>;
 }
@@ -187,6 +188,7 @@ impl<'src, M: 'src + SourceManager> Source<'src, M> {
 }
 
 impl<'src, M: 'src + SourceManager<Storage = Arc<str>>> Source<'src, M> {
+    #[allow(dead_code)]
     pub fn get_contents_owned(&self) -> Arc<str> {
         self.source_manager.get_storage(self.key).clone()
     }
@@ -202,10 +204,12 @@ impl<'src, M: 'src + AriadneSourceManager> Source<'src, M> {
 }
 
 impl<'src> Source<'src, DefaultSourceManager> {
+    #[allow(dead_code)]
     pub fn get_filepath_str(&self) -> &'src str {
         self.source_manager.rodeo.resolve(&self.key)
     }
 
+    #[allow(dead_code)]
     pub fn get_filepath(&self) -> &'src Path {
         Path::new(self.get_filepath_str())
     }

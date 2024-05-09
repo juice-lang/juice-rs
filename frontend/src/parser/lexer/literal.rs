@@ -977,9 +977,9 @@ mod tests {
             Tok![Newline], 114;
             Tok![Int(0, Decimal)], 127;
             Tok![.], 128;
-            Tok![Ident], 129, "foo";
+            Tok![Ident("foo")], 129..132;
             Tok![Newline], 132;
-            Tok![Ident], 145, "foo";
+            Tok![Ident("foo")], 145..148;
             Tok![.], 148;
             Tok![Int(0, Decimal)], 149;
             Tok![.], 150;
@@ -1043,7 +1043,7 @@ mod tests {
             Tok![Newline], 94;
             Tok![Float(0.0)], 107..110;
             Tok![.], 110;
-            Tok![Ident], 111, "foo";
+            Tok![Ident("foo")], 111..114;
             Tok![Newline], 114;
         );
     }
@@ -1284,7 +1284,7 @@ mod tests {
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
-                        Tok![Ident], 23, "world";
+                        Tok![Ident("world")], 23..28;
                     );
                     s.as_ref() == "hello, "
                 }
@@ -1297,13 +1297,13 @@ mod tests {
                 ] if {
                     assert_all_tokens!(
                         inner_tokens_1;
-                        Tok![Ident], 34, "a";
-                        Tok![BinOp], 36, "+";
-                        Tok![Ident], 38, "b";
+                        Tok![Ident("a")], 34;
+                        Tok![BinOp("+")], 36;
+                        Tok![Ident("b")], 38;
                     );
                     assert_all_tokens!(
                         inner_tokens_2;
-                        Tok![Ident], 42, "c";
+                        Tok![Ident("c")], 42;
                     );
                     true
                 }
@@ -1319,7 +1319,7 @@ mod tests {
                             [InterpolationPart::Interpolation(inner_inner_tokens)] if {
                                 assert_all_tokens!(
                                     inner_inner_tokens;
-                                    Tok![Ident], 64, "a";
+                                    Tok![Ident("a")], 64;
                                 );
                                 true
                             }
@@ -1337,7 +1337,7 @@ mod tests {
                 ] if {
                     assert_all_tokens!(
                         inner_tokens;
-                        Tok![Ident], 108, "world";
+                        Tok![Ident("world")], 108..113;
                     );
                     s.as_ref() == "hello$, "
                 }

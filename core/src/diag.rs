@@ -7,10 +7,6 @@ use std::{
 
 use ariadne::{Color, Fmt as _, ReportKind};
 
-mod private {
-    pub trait Sealed {}
-}
-
 #[derive(Clone, Default)]
 pub struct ColorGenerator {
     colors: Arc<Mutex<(ariadne::ColorGenerator, Vec<Color>)>>,
@@ -29,6 +25,7 @@ impl ColorGenerator {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Color {
         let mut colors = self.colors.lock().unwrap_or_else(PoisonError::into_inner);
         while self.current >= colors.1.len() {
@@ -62,14 +59,13 @@ impl ColorExt for Color {
     }
 }
 
-pub trait DiagnosticArg: private::Sealed {
+pub trait DiagnosticArg {
     fn with_color(self, color: impl Into<Option<Color>>) -> impl Display;
 }
 
 macro_rules! diagnostic_arg {
     ($($type: ty),*) => {
         $(
-            impl private::Sealed for $type {}
             impl DiagnosticArg for $type {
                 fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
                     self
@@ -81,8 +77,6 @@ macro_rules! diagnostic_arg {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Colored<T>(T);
-
-impl<T: Display> private::Sealed for Colored<T> {}
 
 impl<T: Display> DiagnosticArg for Colored<T> {
     fn with_color(self, color: impl Into<Option<Color>>) -> impl Display {
@@ -98,8 +92,6 @@ impl<T: Display> From<T> for Colored<T> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrefixedWithArticle<T>(T);
-
-impl<T: Display> private::Sealed for PrefixedWithArticle<T> {}
 
 impl<T: Display> DiagnosticArg for PrefixedWithArticle<T> {
     fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {
@@ -143,8 +135,6 @@ diagnostic_arg!(
     Arc<str>,
     Cow<'_, str>
 );
-
-impl<T> private::Sealed for PhantomData<T> {}
 
 impl<T> DiagnosticArg for PhantomData<T> {
     fn with_color(self, _color: impl Into<Option<Color>>) -> impl Display {

@@ -2,7 +2,7 @@ pub mod literal;
 pub mod token;
 pub mod token_kind;
 
-use std::{num::NonZero, ops::Try as _};
+use std::num::NonZero;
 
 use juice_core::{CharExt, OptionExt as _, PeekableChars};
 
@@ -12,36 +12,13 @@ pub use self::{
     token::Token,
     token_kind::{KeywordKind, PunctuationKind, TokenKind},
 };
+use super::Error;
 use crate::{
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
     source_loc::{SourceLoc, SourceRange},
     source_manager::{Source, SourceManager},
     Result,
 };
-
-#[derive(Debug, Clone)]
-pub struct Error<'src, M: 'src + SourceManager> {
-    source_loc: SourceLoc<'src, M>,
-    diagnostic: Diagnostic<'src>,
-    context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,
-    note: Option<DiagnosticNote<'src>>,
-}
-
-impl<'src, M: 'src + SourceManager> Error<'src, M> {
-    pub fn diagnose<C: DiagnosticConsumer<'src, M>>(self, diagnostics: &DiagnosticEngine<'src, M, C>) -> C::Output {
-        let mut report = diagnostics.report(self.source_loc, self.diagnostic);
-
-        for (source_range, context_note) in self.context_notes {
-            report = report.with_context_note(source_range, context_note);
-        }
-
-        if let Some(note) = self.note {
-            report = report.with_note(note);
-        }
-
-        report.diagnose()
-    }
-}
 
 #[derive(Debug, Clone)]
 struct PendingError<'src, M: 'src + SourceManager> {
@@ -138,12 +115,7 @@ impl<'src, 'lex, M: 'src + SourceManager> ErrorBuilder<'src, 'lex, M> {
                 let mut context_notes = context_notes;
                 context_notes.push((source_range, initial_context_note));
 
-                let error = Error {
-                    source_loc,
-                    diagnostic,
-                    context_notes,
-                    note,
-                };
+                let error = Error::new(source_loc, diagnostic, context_notes, note);
 
                 lexer.errors.push(error);
             }
@@ -269,12 +241,12 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
     pub fn diagnose_errors<C: DiagnosticConsumer<'src, M>>(
         &mut self,
         diagnostics: &DiagnosticEngine<'src, M, C>,
-    ) -> C::Output {
+    ) -> Result<(), C::Error> {
         for error in self.errors.drain(..) {
             error.diagnose(diagnostics)?;
         }
 
-        C::Output::from_output(())
+        Ok(())
     }
 
     fn next_token(&mut self) -> Option<Token<'src, M>> {
@@ -318,12 +290,12 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
         let token_kind = match c {
             '\n' => {
                 if self.in_interpolation {
-                    self.errors.push(Error {
-                        source_loc: self.get_current_loc() - 1,
-                        diagnostic: Diagnostic::newline_in_interpolation(),
-                        context_notes: Vec::new(),
-                        note: Some(DiagnosticNote::newline_in_interpolation()),
-                    });
+                    self.errors.push(Error::new(
+                        self.get_current_loc() - 1,
+                        Diagnostic::newline_in_interpolation(),
+                        Vec::new(),
+                        Some(DiagnosticNote::newline_in_interpolation()),
+                    ));
                 }
 
                 Tok![Newline]
@@ -433,10 +405,9 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
     fn consume_identifier(&mut self) -> TokenKind<'src, M> {
         while self.match_char(CharExt::is_identifier_char) {}
 
-        self.get_current_range()
-            .get_str()
-            .parse()
-            .map_or(Tok![Ident], TokenKind::Keyword)
+        let ident = self.get_current_range().get_str();
+
+        ident.parse().map_or(Tok![Ident(ident)], TokenKind::Keyword)
     }
 
     fn consume_operator(&mut self, allow_dot: bool) -> TokenKind<'src, M> {
@@ -497,15 +468,17 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
 
         let next_is_dot = self.peek() == Some('.');
 
+        let op = self.get_current_range().get_str();
+
         match (has_leading_whitespace, has_trailing_whitespace) {
-            (true, false) => Tok![PrefixOp],
-            (false, true) => Tok![PostfixOp],
-            (true, true) => Tok![BinOp],
+            (true, false) => Tok![PrefixOp(op)],
+            (false, true) => Tok![PostfixOp(op)],
+            (true, true) => Tok![BinOp(op)],
             (false, false) => {
                 if next_is_dot {
-                    Tok![PostfixOp]
+                    Tok![PostfixOp(op)]
                 } else {
-                    Tok![BinOp]
+                    Tok![BinOp(op)]
                 }
             }
         }
@@ -541,12 +514,12 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
             };
 
             if self.in_interpolation && c == '\n' {
-                self.errors.push(Error {
-                    source_loc: self.get_current_loc() - 1,
-                    diagnostic: Diagnostic::newline_in_interpolation(),
-                    context_notes: Vec::new(),
-                    note: Some(DiagnosticNote::newline_in_interpolation()),
-                });
+                self.errors.push(Error::new(
+                    self.get_current_loc() - 1,
+                    Diagnostic::newline_in_interpolation(),
+                    Vec::new(),
+                    Some(DiagnosticNote::newline_in_interpolation()),
+                ));
             }
 
             if c == '/' && self.match_char_eq('*') {
@@ -564,12 +537,7 @@ impl<'src, M: SourceManager> Lexer<'src, M> {
             let mut context_notes = pending.context_notes;
             context_notes.push((current_range, pending.initial_context_note));
 
-            let error = Error {
-                source_loc: pending.source_loc,
-                diagnostic: pending.diagnostic,
-                context_notes,
-                note: pending.note,
-            };
+            let error = Error::new(pending.source_loc, pending.diagnostic, context_notes, pending.note);
 
             self.errors.push(error);
         }
@@ -751,7 +719,7 @@ pub(crate) mod test {
 
         let tokens = (&mut lexer).collect();
 
-        lexer.diagnose_errors(&diagnostics);
+        Ok(()) = lexer.diagnose_errors(&diagnostics);
 
         if diagnostics.had_error() {
             Err(diagnostics.into_consumer().into_reports())
@@ -1023,8 +991,8 @@ mod tests {
             Tok![let], 8..11;
             Tok![var], 12..15;
             Tok![while], 16..21;
-            Tok![Ident], 22, "foo";
-            Tok![Ident], 26, "letter";
+            Tok![Ident("foo")], 22..25;
+            Tok![Ident("letter")], 26..32;
         );
     }
 
@@ -1053,7 +1021,7 @@ mod tests {
             Tok![=>], 28..30;
             Tok![->], 31..33;
             Tok![&], 34;
-            Tok![Ident], 35, "x";
+            Tok![Ident("x")], 35;
             Tok![&w], 37..39;
             Tok![#], 40;
             Tok![Newline], 42;
@@ -1068,16 +1036,16 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Tok![BinOp], 0, "+";
-            Tok![BinOp], 2, "-";
+            Tok![BinOp("+")], 0;
+            Tok![BinOp("-")], 2;
             Tok![.], 4;
-            Tok![BinOp], 6, "..";
-            Tok![BinOp], 9, "./.";
-            Tok![PrefixOp], 13, "+";
+            Tok![BinOp("..")], 6..8;
+            Tok![BinOp("./.")], 9..12;
+            Tok![PrefixOp("+")], 13;
             Tok![.], 14;
-            Tok![BinOp], 16, "^*^";
-            Tok![PrefixOp], 20, "-";
-            Tok![Ident], 21, "hello";
+            Tok![BinOp("^*^")], 16..19;
+            Tok![PrefixOp("-")], 20;
+            Tok![Ident("hello")], 21..26;
         );
     }
 
@@ -1089,21 +1057,21 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Tok![PrefixOp], 0, "+";
-            Tok![Ident], 1, "a";
-            Tok![BinOp], 2, "-";
-            Tok![Ident], 3, "b";
-            Tok![BinOp], 5, "*";
-            Tok![Ident], 7, "c";
-            Tok![PostfixOp], 8, "++";
-            Tok![BinOp], 11, "+";
+            Tok![PrefixOp("+")], 0;
+            Tok![Ident("a")], 1;
+            Tok![BinOp("-")], 2;
+            Tok![Ident("b")], 3;
+            Tok![BinOp("*")], 5;
+            Tok![Ident("c")], 7;
+            Tok![PostfixOp("++")], 8..10;
+            Tok![BinOp("+")], 11;
             Tok![Newline], 12;
-            Tok![PrefixOp], 13, "-";
-            Tok![Ident], 14, "d";
-            Tok![PostfixOp], 15, "--";
+            Tok![PrefixOp("-")], 13;
+            Tok![Ident("d")], 14;
+            Tok![PostfixOp("--")], 15..17;
             Tok![.], 17;
-            Tok![Ident], 18, "e";
-            Tok![PostfixOp], 19, "++";
+            Tok![Ident("e")], 18;
+            Tok![PostfixOp("++")], 19..21;
         );
     }
 
@@ -1116,17 +1084,17 @@ mod tests {
 
         assert_all_tokens!(
             tokens;
-            Tok![BinOp], 0, "&&";
+            Tok![BinOp("&&")], 0..2;
             Tok![&], 3;
             Tok![&], 4;
-            Tok![Ident], 5, "x";
+            Tok![Ident("x")], 5;
             Tok![&], 7;
             Tok![&w], 8..10;
-            Tok![BinOp], 11, "&&&";
+            Tok![BinOp("&&&")], 11..14;
             Tok![&], 15;
             Tok![&], 16;
             Tok![&], 17;
-            Tok![Ident], 18, "x";
+            Tok![Ident("x")], 18;
             Tok![&], 20;
             Tok![&], 21;
             Tok![&w], 22..24;
@@ -1135,31 +1103,31 @@ mod tests {
             Tok![&], 27;
             Tok![LeftParen], 28;
             Tok![RightParen], 29;
-            Tok![BinOp], 31, "&&-";
+            Tok![BinOp("&&-")], 31..34;
             Tok![&], 35;
             Tok![&], 36;
-            Tok![PrefixOp], 37, "-";
-            Tok![Ident], 38, "x";
+            Tok![PrefixOp("-")], 37;
+            Tok![Ident("x")], 38;
             Tok![&], 40;
             Tok![&w], 41..43;
-            Tok![PrefixOp], 43, "-";
-            Tok![Ident], 44, "x";
-            Tok![BinOp], 46, "&&-&";
+            Tok![PrefixOp("-")], 43;
+            Tok![Ident("x")], 44;
+            Tok![BinOp("&&-&")], 46..50;
             Tok![&], 51;
             Tok![&], 52;
-            Tok![PrefixOp], 53, "-";
+            Tok![PrefixOp("-")], 53;
             Tok![&], 54;
-            Tok![Ident], 55, "x";
+            Tok![Ident("x")], 55;
             Tok![&], 57;
             Tok![&], 58;
-            Tok![PrefixOp], 59, "-";
+            Tok![PrefixOp("-")], 59;
             Tok![&w], 60..62;
             Tok![&], 63;
-            Tok![PrefixOp], 64, "-";
+            Tok![PrefixOp("-")], 64;
             Tok![&], 65;
-            Tok![PrefixOp], 66, "-";
+            Tok![PrefixOp("-")], 66;
             Tok![&], 67;
-            Tok![Ident], 68, "x";
+            Tok![Ident("x")], 68;
         );
     }
 
@@ -1181,21 +1149,21 @@ mod tests {
         assert_all_tokens!(
             tokens;
             Tok![Newline], 0;
-            Tok![Ident], 13, "a";
-            Tok![BinOp], 15, "+";
-            Tok![Ident], 17, "b";
+            Tok![Ident("a")], 13;
+            Tok![BinOp("+")], 15;
+            Tok![Ident("b")], 17;
             Tok![Newline], 39;
-            Tok![Ident], 52, "c";
-            Tok![Ident], 100, "d";
+            Tok![Ident("c")], 52;
+            Tok![Ident("d")], 100;
             Tok![Newline], 101;
-            Tok![Ident], 114, "e";
-            Tok![Ident], 153, "f";
+            Tok![Ident("e")], 114;
+            Tok![Ident("f")], 153;
             Tok![Newline], 154;
-            Tok![Ident], 167, "g";
-            Tok![BinOp], 169, "+";
+            Tok![Ident("g")], 167;
+            Tok![BinOp("+")], 169;
             Tok![Newline], 217;
-            Tok![Ident], 230, "h";
-            Tok![BinOp], 232, "-";
+            Tok![Ident("h")], 230;
+            Tok![BinOp("-")], 232;
             Tok![Newline], 283;
         );
     }

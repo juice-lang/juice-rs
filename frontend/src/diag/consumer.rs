@@ -1,5 +1,3 @@
-use std::ops::Try;
-
 use ariadne::{Color, Config, IndexType, Label, Report};
 use juice_core::diag::{ColorExt as _, ColorGenerator};
 
@@ -7,17 +5,17 @@ use super::{DiagnosticEngine, DiagnosticReport};
 use crate::{
     source_loc::SourceRange,
     source_manager::{AriadneSourceManager, SourceManager},
-    Result,
+    Error, Result,
 };
 
 pub trait Consumer<'src, M: 'src + SourceManager>: Sized {
-    type Output: Try<Output = ()>;
+    type Error;
 
     fn consume<'diag>(
         &self,
         report: DiagnosticReport<'src, 'diag, M, Self>,
         engine: &'diag DiagnosticEngine<'src, M, Self>,
-    ) -> Self::Output;
+    ) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -64,7 +62,7 @@ impl DefaultConsumer {
 }
 
 impl<'src, M: 'src + AriadneSourceManager> Consumer<'src, M> for DefaultConsumer {
-    type Output = Result<()>;
+    type Error = Error;
 
     fn consume<'diag>(
         &self,
@@ -79,9 +77,10 @@ impl<'src, M: 'src + AriadneSourceManager> Consumer<'src, M> for DefaultConsumer
 
 #[cfg(test)]
 pub(crate) mod test {
-    use std::sync::{Mutex, PoisonError};
-
-    use juice_core::Unit;
+    use std::{
+        convert::Infallible,
+        sync::{Mutex, PoisonError},
+    };
 
     use crate::{
         diag::{engine::test::Report, DiagnosticEngine, DiagnosticReport},
@@ -106,19 +105,19 @@ pub(crate) mod test {
     }
 
     impl super::Consumer<'static, TestSourceManager> for Consumer {
-        type Output = Unit;
+        type Error = Infallible;
 
         fn consume<'diag>(
             &self,
             report: DiagnosticReport<'static, 'diag, TestSourceManager, Self>,
             _: &'diag DiagnosticEngine<'static, TestSourceManager, Self>,
-        ) -> Unit {
+        ) -> Result<(), Infallible> {
             self.reports
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(report.into());
 
-            Unit
+            Ok(())
         }
     }
 }

@@ -35,6 +35,7 @@ diagnostic!(
             "Expected `{}` to end interpolation in string literal",
         [error] NewlineInInterpolation => "Newline in string interpolation",
         [error] MultilineStringInInterpolation => "Multiline string literal in string interpolation",
+        [error] UnexpectedParserError => "Unexpected parser error",
     }
 
     #[derive(Debug, Clone)]
