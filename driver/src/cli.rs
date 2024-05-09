@@ -114,6 +114,9 @@ mod private {
         /// The output file to write to (can be `-` for stdout)
         #[arg(short, long = "output-file", value_parser = output_file_path_parser, value_name = "FILE")]
         pub output_filename: Option<OutputFilePath>,
+        /// Use verbose output
+        #[arg(short, long)]
+        pub verbose: bool,
         /// Parse the input file and dump the AST
         #[arg(long, group = "main-action", help_heading = "Actions")]
         pub dump_parse: bool,
@@ -193,6 +196,7 @@ impl TryFrom<private::MainArgs> for MainArgs {
         Ok(Self {
             input_filepath,
             output_filepath,
+            verbose: args.verbose,
             action,
         })
     }

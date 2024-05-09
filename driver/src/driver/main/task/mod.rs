@@ -41,11 +41,11 @@ mod private {
             }
         }
 
-        async fn execute_inputs(&self, time_point: SystemTime) -> DriverResult<bool> {
+        async fn execute_inputs(&self, time_point: SystemTime, verbose: bool) -> DriverResult<bool> {
             let mut executed = false;
 
             for input in self.get_inputs() {
-                if input.execute_if_necessary(time_point).await? {
+                if input.execute_if_necessary(time_point, verbose).await? {
                     executed = true;
                 }
             }
@@ -56,15 +56,15 @@ mod private {
 }
 
 pub trait Task: private::Task {
-    async fn execute_if_necessary(&self, time_point: SystemTime) -> DriverResult<bool> {
+    async fn execute_if_necessary(&self, time_point: SystemTime, verbose: bool) -> DriverResult<bool> {
         match self.get_output_path().as_ref() {
             OutputFilePath::Stdout => {
-                self.execute_inputs(time_point).await?;
+                self.execute_inputs(time_point, verbose).await?;
             }
             OutputFilePath::File(path) => match fs::metadata(path) {
                 Ok(metadata) if metadata.is_file() => {
                     if self.get_output_is_temporary() {
-                        let inputs_executed = self.execute_inputs(time_point).await?;
+                        let inputs_executed = self.execute_inputs(time_point, verbose).await?;
 
                         if !inputs_executed {
                             return Ok(false);
@@ -72,7 +72,7 @@ pub trait Task: private::Task {
                     } else {
                         let modification_time = metadata.modified().unwrap();
 
-                        let inputs_executed = self.execute_inputs(modification_time).await?;
+                        let inputs_executed = self.execute_inputs(modification_time, verbose).await?;
 
                         if !inputs_executed {
                             return Ok(modification_time > time_point);
@@ -81,17 +81,19 @@ pub trait Task: private::Task {
                 }
                 Ok(_) => return Err(DriverError::FileNotRegular(path.to_owned())),
                 Err(error) if error.kind() == IoErrorKind::NotFound => {
-                    self.execute_inputs(time_point).await?;
+                    self.execute_inputs(time_point, verbose).await?;
                 }
                 Err(error) => return Err(error.into()),
             },
         }
 
-        print!("{} ", self.get_executable_path().to_string_lossy());
-        for argument in self.get_arguments() {
-            print!("{} ", argument.to_string_lossy());
+        if verbose {
+            print!("{}", self.get_executable_path().to_string_lossy());
+            for argument in self.get_arguments() {
+                print!(" {}", argument.to_string_lossy());
+            }
+            println!();
         }
-        println!();
 
         let status = Command::new(self.get_executable_path())
             .args(self.get_arguments())
@@ -117,10 +119,10 @@ pub trait Task: private::Task {
         }
     }
 
-    async fn execute(&self) -> DriverResult<()> {
+    async fn execute(&self, verbose: bool) -> DriverResult<()> {
         let time_point = SystemTime::now();
 
-        self.execute_if_necessary(time_point).await?;
+        self.execute_if_necessary(time_point, verbose).await?;
 
         Ok(())
     }
@@ -129,9 +131,13 @@ pub trait Task: private::Task {
 pub trait ErasedTask: Send + Sync {
     fn get_output_path(&self) -> Cow<OutputFilePath>;
 
-    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>>;
+    fn execute_if_necessary(
+        &self,
+        time_point: SystemTime,
+        verbose: bool,
+    ) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>>;
 
-    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>>;
+    fn execute(&self, verbose: bool) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>>;
 }
 
 impl<T: ?Sized + Task> ErasedTask for T {
@@ -139,12 +145,16 @@ impl<T: ?Sized + Task> ErasedTask for T {
         self.get_output_path()
     }
 
-    fn execute_if_necessary(&self, time_point: SystemTime) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>> {
-        Box::pin(self.execute_if_necessary(time_point))
+    fn execute_if_necessary(
+        &self,
+        time_point: SystemTime,
+        verbose: bool,
+    ) -> Pin<Box<dyn '_ + Future<Output = DriverResult<bool>>>> {
+        Box::pin(self.execute_if_necessary(time_point, verbose))
     }
 
-    fn execute(&self) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>> {
-        Box::pin(self.execute())
+    fn execute(&self, verbose: bool) -> Pin<Box<dyn '_ + Future<Output = DriverResult<()>>>> {
+        Box::pin(self.execute(verbose))
     }
 }
 
@@ -183,7 +193,7 @@ impl private::Task for InputTask {
 }
 
 impl Task for InputTask {
-    async fn execute_if_necessary(&self, time_point: SystemTime) -> DriverResult<bool> {
+    async fn execute_if_necessary(&self, time_point: SystemTime, _verbose: bool) -> DriverResult<bool> {
         match fs::metadata(&self.0) {
             Ok(metadata) if metadata.is_file() => {
                 if metadata.modified().unwrap() > time_point {

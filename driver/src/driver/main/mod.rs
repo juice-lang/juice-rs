@@ -49,6 +49,7 @@ impl Action {
 pub struct Args {
     pub input_filepath: PathBuf,
     pub output_filepath: OutputFilePath,
+    pub verbose: bool,
     pub action: Action,
 }
 
@@ -87,6 +88,6 @@ impl DriverTrait for Driver {
             )?)
         };
 
-        task.execute().await
+        task.execute(self.args.verbose).await
     }
 }
