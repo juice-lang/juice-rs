@@ -7,7 +7,11 @@ rust-version = "1.79.0"
 
 [workspace.dependencies]
 ariadne = "0.4.1"
-chumsky = { version = "1.0.0-alpha.7", features = ["nightly", "sync"] }
+chumsky = { version = "1.0.0-alpha.7", features = [
+    "memoization",
+    "nightly",
+    "sync",
+] }
 derive_more = "0.99.17"
 itertools = "0.12.1"
 juice-core = { version = "0.1.0", path = "core" }

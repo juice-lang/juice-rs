@@ -18,7 +18,7 @@ use self::{
 };
 use crate::{
     ast::expr::{BorrowExpr, Expr, ExprKind, IntLiteralExpr, InterpolationExprPart, LiteralExpr, UnaryOperatorExpr},
-    diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine},
+    diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine, DiagnosticNote},
     source_loc::SourceRange,
     source_manager::{Source, SourceManager},
 };
@@ -64,7 +64,25 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
             .boxed()
             .spanned(self.source.get_eof_range());
 
-        let (expr, errors) = Self::expr_parser().parse(parser_input).into_output_errors();
+        let (expr, errors) = Self::expr_parser()
+            .padded_by(<NewlinesParser>::parser())
+            .map_err_with_span(|_, mut range| {
+                let start_loc = range.start_loc();
+
+                if range.is_empty() {
+                    range = start_loc.get_character_range().unwrap();
+                }
+
+                Error::new(
+                    start_loc,
+                    Diagnostic::expected_expression("at top level"),
+                    vec![(range, DiagnosticContextNote::expected_expression_location())],
+                    None,
+                )
+                .into()
+            })
+            .parse(parser_input)
+            .into_output_errors();
 
         self.lexer.diagnose_errors(diagnostics)?;
 
@@ -79,7 +97,7 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
     where
         'src: 'lex,
     {
-        recursive(|expr| Self::binary_expr_parser(expr).padded_by(Self::newlines_parser()))
+        recursive(|expr| Self::binary_expr_parser(expr))
     }
 
     fn binary_expr_parser<'lex, P: ParserTrait<'src, 'lex, M, Expr<'src, M>>>(
@@ -90,10 +108,45 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
     {
         let unary_expr = Self::unary_expr_parser(expr);
 
-        unary_expr.clone().foldl_with_span(
+        let first_expr = just!(Tok![BinOp(_)])
+            .to_span()
+            .or_not()
+            .then(unary_expr.clone())
+            .validate(|(op_range, expr), e, emitter| {
+                if let Some(op_range) = op_range {
+                    let error = Error::new(
+                        op_range.start_loc(),
+                        Diagnostic::unexpected_binary_operator(),
+                        vec![
+                            (op_range, DiagnosticContextNote::operator_location()),
+                            (
+                                expr.source_range,
+                                DiagnosticContextNote::maybe_prefix_operand_location(),
+                            ),
+                        ],
+                        Some(DiagnosticNote::expected_prefix_operator()),
+                    );
+
+                    emitter.emit(error.into());
+
+                    UnaryOperatorExpr::new_invalid(expr, op_range, true).into_expr(e.span())
+                } else {
+                    expr
+                }
+            });
+
+        first_expr.foldl_with_span(
             group((
-                just!(Tok![BinOp(_)]).to_span().padded_by(Self::newlines_parser()),
-                unary_expr.map(Ok).or(any().to_span().or_not().rewind().map(Err)),
+                <NewlinesParser>::parser().ignore_then(just!(Tok![BinOp(_)]).to_span()),
+                <NewlinesParser>::parser()
+                    .ignore_then(unary_expr)
+                    .map(Ok)
+                    .or(<NewlinesParser>::parser()
+                        .ignore_then(any())
+                        .to_span()
+                        .or_not()
+                        .rewind()
+                        .map(Err)),
             ))
             .validate(|(op_range, res), e, emitter| match res {
                 Ok(expr) => (op_range, expr),
@@ -107,7 +160,7 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
                         Diagnostic::expected_expression("after binary operator"),
                         vec![
                             (span, DiagnosticContextNote::expected_expression_location()),
-                            (op_range, DiagnosticContextNote::binary_operator_location()),
+                            (op_range, DiagnosticContextNote::operator_location()),
                         ],
                         None,
                     );
@@ -130,28 +183,64 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
     {
         let postfix_expr = Self::primary_expr_parser(expr)
             .then(just!(Tok![PostfixOp(_)]).to_span().or_not())
-            .map(|(expr, op_range)| {
+            .map_with_span(|(expr, op_range), range| {
                 if let Some(op_range) = op_range {
-                    ExprKind::UnaryOperator(UnaryOperatorExpr::new(expr, op_range, false))
+                    UnaryOperatorExpr::new(expr, op_range, false).into_expr(range)
                 } else {
-                    expr.kind
+                    expr.kind.into_expr(range)
                 }
-            })
-            .map_with_span(Expr::new);
+            });
 
         let prefix_operator = choice((
-            just(Tok![&]).to((|e, _| ExprKind::Borrow(BorrowExpr::new(e, false))) as fn(_, _) -> _),
-            just(Tok![&w]).to((|e, _| ExprKind::Borrow(BorrowExpr::new(e, true))) as fn(_, _) -> _),
-            just!(Tok![PrefixOp(_)])
-                .to((|e, span| ExprKind::UnaryOperator(UnaryOperatorExpr::new(e, span, true))) as fn(_, _) -> _),
-        ));
+            just(Tok![&]).to((|expr, range, _| BorrowExpr::new(expr, false).into_expr(range)) as fn(_, _, _) -> _),
+            just(Tok![&w]).to((|expr, range, _| BorrowExpr::new(expr, true).into_expr(range)) as fn(_, _, _) -> _),
+            just!(Tok![PrefixOp(_)]).to((|expr, range, op_range| {
+                UnaryOperatorExpr::new(expr, op_range, true).into_expr(range)
+            }) as fn(_, _, _) -> _),
+        ))
+        .with_span()
+        .memoized();
 
-        prefix_operator
-            .with_span()
+        let inner_prefix_expr = prefix_operator
+            .clone()
+            .then(
+                postfix_expr
+                    .clone()
+                    .map(Ok)
+                    .or(any().to_span().or_not().rewind().map(Err)),
+            )
+            .validate(|((op_f, op_range), res), e, emitter| match res {
+                Ok(expr) => op_f(expr, e.span(), op_range),
+                Err(span) => {
+                    let span = span
+                        .or_else(|| e.span().end_loc().get_character_range())
+                        .unwrap_or_else(|| e.span().source.get_last_range());
+
+                    let error = Error::new(
+                        span.start_loc(),
+                        Diagnostic::expected_expression("after prefix operator"),
+                        vec![
+                            (span, DiagnosticContextNote::expected_expression_location()),
+                            (op_range, DiagnosticContextNote::operator_location()),
+                        ],
+                        None,
+                    );
+
+                    emitter.emit(error.into());
+
+                    op_f(Expr::new(ExprKind::Error, span), e.span(), op_range)
+                }
+            });
+
+        let prefix_expr = prefix_operator
+            .clone()
+            .then_ignore(prefix_operator.rewind()) // Ensure that one prefix operator is left for inner_prefix_expr
             .repeated()
-            .foldr_with_span(postfix_expr, |(op_f, op_span), e, span| {
-                Expr::new(op_f(e, op_span), span)
-            })
+            .foldr_with_span(inner_prefix_expr, |(op_f, op_range), expr, range| {
+                op_f(expr, range, op_range)
+            });
+
+        prefix_expr.or(postfix_expr)
     }
 
     fn primary_expr_parser<'lex>(
@@ -163,6 +252,7 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
         Self::literal_parser(expr.clone())
             .or(just!(Tok![Ident(_)]).to_span().map(ExprKind::Identifier))
             .or(expr
+                .padded_by(<NewlinesParser>::parser())
                 .delimited_by(just(Tok![LeftParen]), just(Tok![RightParen]))
                 .map(Box::new)
                 .map(ExprKind::Grouping))
@@ -207,7 +297,25 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
 
                         let parser_input = Stream::from_iter(input).boxed().spanned(eoi_range);
 
-                        let (expr, errors) = expr.parse(parser_input).into_output_errors();
+                        let (expr, errors) = expr
+                            .clone()
+                            .map_err_with_span(|_, mut range| {
+                                let start_loc = range.start_loc();
+
+                                if range.is_empty() {
+                                    range = start_loc.get_character_range().unwrap();
+                                }
+
+                                Error::new(
+                                    start_loc,
+                                    Diagnostic::expected_expression("in string interpolation"),
+                                    vec![(range, DiagnosticContextNote::expected_expression_location())],
+                                    None,
+                                )
+                                .into()
+                            })
+                            .parse(parser_input)
+                            .into_output_errors();
 
                         let interpolation_range = range.source.get_range(range.start - 2, range.end + 1);
 
@@ -237,15 +345,23 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
             Tok![Float(v)] => LiteralExpr::Float(v),
             Tok![Char(c)] => LiteralExpr::Char(c),
             Tok![String(s)] => LiteralExpr::String(s),
+            Tok![InvalidInt] => LiteralExpr::InvalidInt,
+            Tok![InvalidFloat] => LiteralExpr::InvalidFloat,
+            Tok![InvalidChar] => LiteralExpr::InvalidChar,
+            Tok![InvalidString] => LiteralExpr::InvalidString,
         }
         .or(interpolation)
         .map(ExprKind::Literal)
     }
+}
 
-    fn newlines_parser<'lex>() -> impl ParserTrait<'src, 'lex, M, ()>
+struct NewlinesParser<const MIN: usize = 0, const MAX: usize = { !0 }>;
+
+impl<const MIN: usize, const MAX: usize> NewlinesParser<MIN, MAX> {
+    fn parser<'src, 'lex, M: 'src + SourceManager>() -> impl ParserTrait<'src, 'lex, M, ()>
     where
         'src: 'lex,
     {
-        just(Tok![Newline]).repeated().ignored()
+        just(Tok![Newline]).repeated().at_least(MIN).at_most(MAX).ignored()
     }
 }

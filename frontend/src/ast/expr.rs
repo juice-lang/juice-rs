@@ -25,9 +25,11 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
     pub fn push(&mut self, op_range: SourceRange<'src, M>, expr: Expr<'src, M>) {
         self.rest.push((op_range, expr));
     }
-}
 
-impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
+    pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
+        Expr::new(ExprKind::BinaryOperatorSequence(self), range)
+    }
+
     fn get_dump(&self) -> Dump<'src> {
         let mut list = Vec::with_capacity(self.rest.len() * 2 + 1);
 
@@ -59,9 +61,11 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
             rhs: Box::new(rhs),
         }
     }
-}
 
-impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
+    pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
+        Expr::new(ExprKind::BinaryOperator(self), range)
+    }
+
     fn get_dump(&self) -> Dump<'src> {
         Dump::new("BinaryOperatorExpr")
             .with_field("operator", self.op_range.get_str())
@@ -75,6 +79,7 @@ pub struct UnaryOperatorExpr<'src, M: 'src + SourceManager> {
     pub operand: Box<Expr<'src, M>>,
     pub op_range: SourceRange<'src, M>,
     pub is_prefix: bool,
+    pub is_invalid: bool,
 }
 
 impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
@@ -83,20 +88,38 @@ impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
             operand: Box::new(operand),
             op_range,
             is_prefix,
+            is_invalid: false,
         }
     }
-}
 
-impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
+    pub fn new_invalid(operand: Expr<'src, M>, op_range: SourceRange<'src, M>, is_prefix: bool) -> Self {
+        Self {
+            operand: Box::new(operand),
+            op_range,
+            is_prefix,
+            is_invalid: true,
+        }
+    }
+
+    pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
+        Expr::new(ExprKind::UnaryOperator(self), range)
+    }
+
     fn get_dump(&self) -> Dump<'src> {
-        let name = if self.is_prefix {
-            "PrefixOperatorExpr"
-        } else {
-            "PostfixOperatorExpr"
+        let name = match (self.is_prefix, self.is_invalid) {
+            (true, false) => "PrefixOperatorExpr",
+            (false, false) => "PostfixOperatorExpr",
+            (true, true) => "InvalidPrefixOperatorExpr",
+            (false, true) => "InvalidPostfixOperatorExpr",
         };
 
-        Dump::new(name)
-            .with_field("operator", self.op_range.get_str())
+        let dump = if self.is_invalid {
+            Dump::new_error(name)
+        } else {
+            Dump::new(name)
+        };
+
+        dump.with_field("operator", self.op_range.get_str())
             .with_field("operand", self.operand.get_dump())
     }
 }
@@ -114,9 +137,11 @@ impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
             is_mutable,
         }
     }
-}
 
-impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
+    pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
+        Expr::new(ExprKind::Borrow(self), range)
+    }
+
     fn get_dump(&self) -> Dump<'src> {
         Dump::new("BorrowExpr")
             .with_field("is_mutable", self.is_mutable)
@@ -144,6 +169,10 @@ pub enum LiteralExpr<'src, M: 'src + SourceManager> {
     Char(char),
     String(Arc<str>),
     StringInterpolation(Arc<[InterpolationExprPart<'src, M>]>),
+    InvalidInt,
+    InvalidFloat,
+    InvalidChar,
+    InvalidString,
 }
 
 impl<'src, M: 'src + SourceManager> LiteralExpr<'src, M> {
@@ -170,6 +199,10 @@ impl<'src, M: 'src + SourceManager> LiteralExpr<'src, M> {
 
                 Dump::new("StringInterpolationExpr").with_field("parts", list)
             }
+            Self::InvalidInt => Dump::new_error("InvalidIntExpr"),
+            Self::InvalidFloat => Dump::new_error("InvalidFloatExpr"),
+            Self::InvalidChar => Dump::new_error("InvalidCharExpr"),
+            Self::InvalidString => Dump::new_error("InvalidStringExpr"),
         }
     }
 }
@@ -187,6 +220,10 @@ pub enum ExprKind<'src, M: 'src + SourceManager> {
 }
 
 impl<'src, M: 'src + SourceManager> ExprKind<'src, M> {
+    pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
+        Expr::new(self, range)
+    }
+
     fn get_dump(&self) -> Dump<'src> {
         match self {
             ExprKind::BinaryOperatorSequence(expr) => expr.get_dump(),
@@ -218,21 +255,19 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
         (op_range, rhs): (SourceRange<'src, M>, Expr<'src, M>),
         source_range: SourceRange<'src, M>,
     ) -> Self {
-        let kind = match self.kind {
+        match self.kind {
             ExprKind::BinaryOperatorSequence(mut seq) => {
                 seq.push(op_range, rhs);
-                ExprKind::BinaryOperatorSequence(seq)
+                seq.into_expr(source_range)
             }
             ExprKind::BinaryOperator(lhs) => {
                 let mut seq = BinaryOperatorSequenceExpr::new(lhs.lhs);
                 seq.push(lhs.op_range, *lhs.rhs);
                 seq.push(op_range, rhs);
-                ExprKind::BinaryOperatorSequence(seq)
+                seq.into_expr(source_range)
             }
-            _ => ExprKind::BinaryOperator(BinaryOperatorExpr::new(self, op_range, rhs)),
-        };
-
-        Self::new(kind, source_range)
+            _ => BinaryOperatorExpr::new(self, op_range, rhs).into_expr(source_range),
+        }
     }
 }
 

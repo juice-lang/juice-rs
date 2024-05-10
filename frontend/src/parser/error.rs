@@ -59,6 +59,7 @@ pub enum ParserErrorKind<'src, M: 'src + SourceManager> {
     Other(Error<'src, M>),
 }
 
+#[derive_where(Debug, Clone)]
 pub struct ParserError<'src, M: 'src + SourceManager> {
     kind: ParserErrorKind<'src, M>,
     context_notes: Vec<(SourceRange<'src, M>, DiagnosticContextNote<'src>)>,

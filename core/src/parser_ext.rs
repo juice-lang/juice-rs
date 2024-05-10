@@ -1,5 +1,5 @@
 use chumsky::{
-    combinator::{FoldlWith, FoldrWith, MapWith},
+    combinator::{FoldlWith, FoldrWith, MapErrWithState, MapWith},
     extra::ParserExtra,
     input::{Input, MapExtra},
     IterParser, Parser,
@@ -12,6 +12,13 @@ pub trait ParserExt<'a, I: Input<'a>, O, E: ParserExtra<'a, I>>: Parser<'a, I, O
         f: impl Fn(O, OB, I::Span) -> O + Clone,
     ) -> FoldlWith<impl Fn(O, OB, &mut MapExtra<'a, '_, I, E>) -> O + Clone, Self, B, OB, E> {
         self.foldl_with(other, move |o, ob, extra| f(o, ob, extra.span()))
+    }
+
+    fn map_err_with_span(
+        self,
+        f: impl Fn(E::Error, I::Span) -> E::Error + Clone,
+    ) -> MapErrWithState<Self, impl Fn(E::Error, I::Span, &mut E::State) -> E::Error + Clone> {
+        self.map_err_with_state(move |e, span, _| f(e, span))
     }
 
     fn map_with_span<U>(

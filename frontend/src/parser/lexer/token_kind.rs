@@ -179,6 +179,18 @@ macro_rules! Tok {
     (Interpolation($pat:tt)) => {
         $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::StringInterpolation($pat))
     };
+    (InvalidInt) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::InvalidInt)
+    };
+    (InvalidFloat) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::InvalidFloat)
+    };
+    (InvalidChar) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::InvalidChar)
+    };
+    (InvalidString) => {
+        $crate::parser::lexer::token_kind::literal_kind!($crate::parser::lexer::LiteralKind::InvalidString)
+    };
     (Ident($pat:tt)) => {
         $crate::parser::lexer::TokenKind::Identifier($pat)
     };
