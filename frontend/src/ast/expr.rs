@@ -4,8 +4,8 @@ use std::{
 };
 
 use derive_where::derive_where;
+use juice_core::dump::{Dump, ToDump};
 
-use super::dump::Dump;
 use crate::{source_loc::SourceRange, source_manager::SourceManager};
 
 #[derive_where(Debug, Clone)]
@@ -29,16 +29,18 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorSequenceExpr<'src, M> {
     pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
         Expr::new(ExprKind::BinaryOperatorSequence(self), range)
     }
+}
 
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for BinaryOperatorSequenceExpr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         let mut list = Vec::with_capacity(self.rest.len() * 2 + 1);
 
-        list.push(Dump::new("ExprPart").with_field("expr", self.first.get_dump()));
+        list.push(Dump::new("ExprPart").with_field("expr", self.first.to_dump()));
 
         list.extend(self.rest.iter().flat_map(|(op_range, expr)| {
             [
-                Dump::new("OperatorPart").with_field("operator", op_range.get_str()),
-                Dump::new("ExprPart").with_field("expr", expr.get_dump()),
+                Dump::new("OperatorPart").with_field("operator", *op_range),
+                Dump::new("ExprPart").with_field("expr", expr.to_dump()),
             ]
         }));
 
@@ -65,12 +67,14 @@ impl<'src, M: 'src + SourceManager> BinaryOperatorExpr<'src, M> {
     pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
         Expr::new(ExprKind::BinaryOperator(self), range)
     }
+}
 
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for BinaryOperatorExpr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         Dump::new("BinaryOperatorExpr")
-            .with_field("operator", self.op_range.get_str())
-            .with_field("lhs", self.lhs.get_dump())
-            .with_field("rhs", self.rhs.get_dump())
+            .with_field("operator", self.op_range)
+            .with_field("lhs", self.lhs.to_dump())
+            .with_field("rhs", self.rhs.to_dump())
     }
 }
 
@@ -104,8 +108,10 @@ impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
     pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
         Expr::new(ExprKind::UnaryOperator(self), range)
     }
+}
 
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for UnaryOperatorExpr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         let name = match (self.is_prefix, self.is_invalid) {
             (true, false) => "PrefixOperatorExpr",
             (false, false) => "PostfixOperatorExpr",
@@ -119,8 +125,8 @@ impl<'src, M: 'src + SourceManager> UnaryOperatorExpr<'src, M> {
             Dump::new(name)
         };
 
-        dump.with_field("operator", self.op_range.get_str())
-            .with_field("operand", self.operand.get_dump())
+        dump.with_field("operator", self.op_range)
+            .with_field("operand", self.operand.to_dump())
     }
 }
 
@@ -141,11 +147,13 @@ impl<'src, M: 'src + SourceManager> BorrowExpr<'src, M> {
     pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
         Expr::new(ExprKind::Borrow(self), range)
     }
+}
 
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for BorrowExpr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         Dump::new("BorrowExpr")
             .with_field("is_mutable", self.is_mutable)
-            .with_field("expr", self.expr.get_dump())
+            .with_field("expr", self.expr.to_dump())
     }
 }
 
@@ -175,8 +183,8 @@ pub enum LiteralExpr<'src, M: 'src + SourceManager> {
     InvalidString,
 }
 
-impl<'src, M: 'src + SourceManager> LiteralExpr<'src, M> {
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for LiteralExpr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         match self {
             Self::Bool(v) => Dump::new("BoolExpr").with_field("value", *v),
             Self::Int(IntLiteralExpr::Int(v)) => Dump::new("IntExpr").with_field("value", *v),
@@ -190,7 +198,7 @@ impl<'src, M: 'src + SourceManager> LiteralExpr<'src, M> {
                     let dump = match part {
                         InterpolationExprPart::String(s) => Dump::new("StringPart").with_field("value", s.clone()),
                         InterpolationExprPart::Interpolation(expr) => {
-                            Dump::new("InterpolationPart").with_field("expr", expr.get_dump())
+                            Dump::new("InterpolationPart").with_field("expr", expr.to_dump())
                         }
                     };
 
@@ -223,16 +231,18 @@ impl<'src, M: 'src + SourceManager> ExprKind<'src, M> {
     pub fn into_expr(self, range: SourceRange<'src, M>) -> Expr<'src, M> {
         Expr::new(self, range)
     }
+}
 
-    fn get_dump(&self) -> Dump<'src> {
+impl<'src, M: 'src + SourceManager> ToDump<'src> for ExprKind<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
         match self {
-            ExprKind::BinaryOperatorSequence(expr) => expr.get_dump(),
-            ExprKind::BinaryOperator(expr) => expr.get_dump(),
-            ExprKind::UnaryOperator(expr) => expr.get_dump(),
-            ExprKind::Borrow(expr) => expr.get_dump(),
-            ExprKind::Literal(expr) => expr.get_dump(),
-            ExprKind::Identifier(range) => Dump::new("IdentifierExpr").with_field("ident", range.get_str()),
-            ExprKind::Grouping(expr) => expr.get_dump(),
+            ExprKind::BinaryOperatorSequence(expr) => expr.to_dump(),
+            ExprKind::BinaryOperator(expr) => expr.to_dump(),
+            ExprKind::UnaryOperator(expr) => expr.to_dump(),
+            ExprKind::Borrow(expr) => expr.to_dump(),
+            ExprKind::Literal(expr) => expr.to_dump(),
+            ExprKind::Identifier(range) => Dump::new("IdentifierExpr").with_field("ident", *range),
+            ExprKind::Grouping(expr) => expr.to_dump(),
             ExprKind::Error => Dump::new_error("ErrorExpr"),
         }
     }
@@ -271,14 +281,14 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
     }
 }
 
-impl<'src, M: 'src + SourceManager> Expr<'src, M> {
-    fn get_dump(&self) -> Dump<'src> {
-        self.kind.get_dump()
+impl<'src, M: 'src + SourceManager> ToDump<'src> for Expr<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
+        self.kind.to_dump()
     }
 }
 
 impl<M: SourceManager> Display for Expr<'_, M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.get_dump())
+        write!(f, "{}", self.to_dump())
     }
 }

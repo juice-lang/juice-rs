@@ -6,10 +6,9 @@ use std::{
 use ariadne::{Color, Fmt as _};
 use derive_more::From;
 use itertools::Itertools as _;
-use juice_core::diag::{ColorExt as _, ColorGenerator};
 use thousands::{digits::ASCII_HEXADECIMAL, Separable as _, SeparatorPolicy};
 
-use crate::{source_loc::SourceRange, source_manager::SourceManager};
+use crate::diag::{ColorExt as _, ColorGenerator};
 
 const UNDERSCORE_HEX_SEPARATOR: SeparatorPolicy = SeparatorPolicy {
     separator: "_",
@@ -30,12 +29,6 @@ pub enum DumpField<'src> {
     Dump(Dump<'src>),
 }
 
-impl<'src, M: 'src + SourceManager> From<SourceRange<'src, M>> for DumpField<'src> {
-    fn from(range: SourceRange<'src, M>) -> Self {
-        Self::String(range.get_str())
-    }
-}
-
 impl DumpField<'_> {
     fn is_multiline(&self) -> bool {
         matches!(self, Self::List(_) | Self::Dump(_))
@@ -50,13 +43,13 @@ impl DumpField<'_> {
             Self::BigInt(v) => {
                 let (first, rest) = v.split_last().unwrap();
 
-                let first = format!("{first:#016x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR);
+                let first = format!("{first:x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR);
 
                 let rest = rest.iter().rev().format_with("_", |part, f| {
                     f(&format!("{part:016x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR))
                 });
 
-                write!(f, "{first}_{rest}")?;
+                write!(f, "0x{first}_{rest}")?;
 
                 Ok(())
             }
@@ -155,4 +148,8 @@ impl Display for Dump<'_> {
         self.display(f, 0, ColorGenerator::default())?;
         writeln!(f)
     }
+}
+
+pub trait ToDump<'src> {
+    fn to_dump(&self) -> Dump<'src>;
 }

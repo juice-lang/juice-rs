@@ -5,6 +5,7 @@ use std::{
 };
 
 use derive_where::derive_where;
+use juice_core::dump::DumpField;
 
 use crate::source_manager::{AriadneSourceManager, Source, SourceManager};
 
@@ -202,5 +203,11 @@ impl<M: AriadneSourceManager> Display for SourceRange<'_, M> {
             }
             _ => write!(f, "({} at offset {}-{})", self.source, self.start, self.end),
         }
+    }
+}
+
+impl<'src, M: 'src + SourceManager> From<SourceRange<'src, M>> for DumpField<'src> {
+    fn from(range: SourceRange<'src, M>) -> Self {
+        Self::String(range.get_str())
     }
 }

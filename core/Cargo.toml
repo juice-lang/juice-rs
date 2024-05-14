@@ -9,4 +9,7 @@ rust-version = { workspace = true }
 [dependencies]
 ariadne = { workspace = true }
 chumsky = { workspace = true }
+derive_more = { workspace = true }
 in_definite = "1.0.0"
+itertools = { workspace = true }
+thousands = "0.2.0"

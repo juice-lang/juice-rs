@@ -2,6 +2,7 @@
 
 mod char_ext;
 pub mod diag;
+pub mod dump;
 mod option_ext;
 pub mod parser_ext;
 mod peekable_chars;

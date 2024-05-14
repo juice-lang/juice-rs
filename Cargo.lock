@@ -551,7 +551,10 @@ version = "0.1.0"
 dependencies = [
  "ariadne",
  "chumsky",
+ "derive_more",
  "in_definite",
+ "itertools",
+ "thousands",
 ]
 
 [[package]]
@@ -583,7 +586,6 @@ dependencies = [
  "juice-macros",
  "lasso",
  "num-bigint",
- "thousands",
 ]
 
 [[package]]

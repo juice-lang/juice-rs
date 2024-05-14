@@ -15,4 +15,3 @@ juice-core = { workspace = true }
 juice-macros = { workspace = true }
 lasso = "0.7.2"
 num-bigint = "0.4.4"
-thousands = "0.2.0"
