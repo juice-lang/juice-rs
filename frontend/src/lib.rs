@@ -1,8 +1,10 @@
 #![feature(
     assert_matches,
     iter_advance_by,
+    is_none_or,
     macro_metavar_expr,
     min_exhaustive_patterns,
+    once_cell_try_insert,
     trait_alias
 )]
 

@@ -5,7 +5,7 @@ pub mod token_kind;
 
 use std::num::NonZero;
 
-use juice_core::{CharExt, OptionExt as _, PeekableChars};
+use juice_core::{CharExt, PeekableChars};
 
 use self::error::{ErrorBuilder, PendingError};
 pub(crate) use self::token_kind::Tok;

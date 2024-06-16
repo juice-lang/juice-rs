@@ -1,9 +1,14 @@
 use chumsky::{
-    combinator::{FoldlWith, FoldrWith, MapErrWithState, MapWith},
+    combinator::{FoldlWith, FoldrWith, Map, MapErrWithState, MapWith, Or, OrNot, Rewind},
     extra::ParserExtra,
     input::{Input, MapExtra},
     IterParser, Parser,
 };
+
+type OkOrRewind<A, B, OA, OB> = Or<
+    Map<A, OA, fn(OA) -> Result<OA, Option<OB>>>,
+    Map<Rewind<OrNot<B>>, Option<OB>, fn(Option<OB>) -> Result<OA, Option<OB>>>,
+>;
 
 pub trait ParserExt<'a, I: Input<'a>, O, E: ParserExtra<'a, I>>: Parser<'a, I, O, E> + Sized {
     fn foldl_with_span<B: IterParser<'a, I, OB, E>, OB>(
@@ -26,6 +31,10 @@ pub trait ParserExt<'a, I: Input<'a>, O, E: ParserExtra<'a, I>>: Parser<'a, I, O
         f: impl Fn(O, I::Span) -> U + Clone,
     ) -> MapWith<Self, O, impl Fn(O, &mut MapExtra<'a, '_, I, E>) -> U + Clone> {
         self.map_with(move |o, extra| f(o, extra.span()))
+    }
+
+    fn ok_or_rewind<B: Parser<'a, I, OB, E>, OB>(self, other: B) -> OkOrRewind<Self, B, O, OB> {
+        self.map(Ok as fn(_) -> _).or(other.or_not().rewind().map(Err))
     }
 
     fn with_span(self) -> MapWith<Self, O, impl Fn(O, &mut MapExtra<'a, '_, I, E>) -> (O, I::Span) + Clone> {

@@ -236,14 +236,14 @@ impl<'src, M: 'src + SourceManager> ExprKind<'src, M> {
 impl<'src, M: 'src + SourceManager> ToDump<'src> for ExprKind<'src, M> {
     fn to_dump(&self) -> Dump<'src> {
         match self {
-            ExprKind::BinaryOperatorSequence(expr) => expr.to_dump(),
-            ExprKind::BinaryOperator(expr) => expr.to_dump(),
-            ExprKind::UnaryOperator(expr) => expr.to_dump(),
-            ExprKind::Borrow(expr) => expr.to_dump(),
-            ExprKind::Literal(expr) => expr.to_dump(),
-            ExprKind::Identifier(range) => Dump::new("IdentifierExpr").with_field("ident", *range),
-            ExprKind::Grouping(expr) => expr.to_dump(),
-            ExprKind::Error => Dump::new_error("ErrorExpr"),
+            Self::BinaryOperatorSequence(expr) => expr.to_dump(),
+            Self::BinaryOperator(expr) => expr.to_dump(),
+            Self::UnaryOperator(expr) => expr.to_dump(),
+            Self::Borrow(expr) => expr.to_dump(),
+            Self::Literal(expr) => expr.to_dump(),
+            Self::Identifier(range) => Dump::new("IdentifierExpr").with_field("ident", *range),
+            Self::Grouping(expr) => expr.to_dump(),
+            Self::Error => Dump::new_error("ErrorExpr"),
         }
     }
 }
@@ -251,7 +251,6 @@ impl<'src, M: 'src + SourceManager> ToDump<'src> for ExprKind<'src, M> {
 #[derive_where(Debug, Clone)]
 pub struct Expr<'src, M: 'src + SourceManager> {
     pub kind: ExprKind<'src, M>,
-    #[allow(dead_code)]
     pub source_range: SourceRange<'src, M>,
 }
 
@@ -262,7 +261,7 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
 
     pub fn with_binary_operator(
         self,
-        (op_range, rhs): (SourceRange<'src, M>, Expr<'src, M>),
+        (op_range, rhs): (SourceRange<'src, M>, Self),
         source_range: SourceRange<'src, M>,
     ) -> Self {
         match self.kind {

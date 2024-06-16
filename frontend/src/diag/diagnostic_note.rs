@@ -23,8 +23,12 @@ diagnostic_note!(
         UnicodeEscapeLocation => "Unicode escape is here",
         UnexpectedParserErrorLocation => "Parser error generated here",
         ExpectedExpressionLocation => "Expression expected here",
+        ExpectedIdentifierLocation => "Identifier expected here",
         OperatorLocation => "Operator is here",
         MaybePrefixOperandLocation => "Did you mean to write a prefix operator with this operand?",
+        ExpectedStatementLocation => "Statement expected here",
+        ContainingVarDeclLocation => "In this variable declaration",
+        VarDeclEqualsLocation(c: into Colored<char> = '=') => "Variable initializer expected after this `{}`",
     }
 );
 

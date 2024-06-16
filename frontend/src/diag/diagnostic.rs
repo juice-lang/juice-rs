@@ -38,6 +38,8 @@ diagnostic!(
         [error] UnexpectedParserError => "Unexpected parser error",
         [error] ExpectedExpression(context: &'static str) => "Expected expression {}",
         [error] UnexpectedBinaryOperator => "Unexpected binary operator",
+        [error] ExpectedStatement(context: &'static str) => "Expected statement {}",
+        [error] ExpectedVarDeclName => "Expected variable name in declaration",
     }
 
     #[derive(Debug, Clone)]
