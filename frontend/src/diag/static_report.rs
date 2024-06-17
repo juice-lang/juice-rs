@@ -5,12 +5,12 @@ use super::{DiagnosticNote, StaticDiagnostic};
 
 #[must_use = "report does nothing unless diagnosed"]
 pub struct StaticReport<'src> {
-    diagnostic: StaticDiagnostic<'src>,
+    diagnostic: StaticDiagnostic,
     note: Option<DiagnosticNote<'src>>,
 }
 
 impl<'src> StaticReport<'src> {
-    pub fn new(diagnostic: StaticDiagnostic<'src>) -> Self {
+    pub fn new(diagnostic: StaticDiagnostic) -> Self {
         Self { diagnostic, note: None }
     }
 

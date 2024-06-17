@@ -1114,12 +1114,12 @@ mod tests {
                 <DiagnosticContextNote::LiteralLocation, 0..2>;
             Diagnostic::NewlineInLiteral { .. }, 4,
                 <DiagnosticContextNote::ContainingLiteralLocation, 3..7>,
-                (DiagnosticNote::NewlineInLiteral);
+                (DiagnosticNote::NewlineInLiteral { .. });
             Diagnostic::ExpectedLiteralTerminator { .. }, 9,
                 <DiagnosticContextNote::UnterminatedLiteralLocation, 8..9>;
             Diagnostic::NewlineInLiteral { .. }, 25,
                 <DiagnosticContextNote::ContainingLiteralLocation, 23..28>,
-                (DiagnosticNote::NewlineInLiteral);
+                (DiagnosticNote::NewlineInLiteral { .. });
             Diagnostic::ExpectedLiteralTerminator { .. }, 31,
                 <DiagnosticContextNote::UnterminatedLiteralLocation, 29..31>;
             Diagnostic::ExpectedUnicodeEscapeBrace { purpose: "start", .. }, 48,
@@ -1148,7 +1148,7 @@ mod tests {
                 <DiagnosticContextNote::ContainingLiteralLocation, 117..121>;
             Diagnostic::StringInCharLiteral, 122,
                 <DiagnosticContextNote::LiteralLocation, 122..127>,
-                (DiagnosticNote::StringInCharLiteral);
+                (DiagnosticNote::StringInCharLiteral { .. });
             Diagnostic::ExpectedLiteralTerminator { .. }, 128,
                 <DiagnosticContextNote::UnterminatedLiteralLocation, 128..129>;
         );
@@ -1231,10 +1231,10 @@ mod tests {
             reports;
             Diagnostic::NewlineInLiteral { .. }, 14,
                 <DiagnosticContextNote::ContainingLiteralLocation, 13..46>,
-                (DiagnosticNote::NewlineInLiteral);
+                (DiagnosticNote::NewlineInLiteral { .. });
             Diagnostic::NewlineInLiteral { .. }, 28,
                 <DiagnosticContextNote::ContainingLiteralLocation, 13..46>,
-                (DiagnosticNote::NewlineInLiteral);
+                (DiagnosticNote::NewlineInLiteral { .. });
             Diagnostic::MissingUnicodeEscape { .. }, 44,
                 <DiagnosticContextNote::UnicodeEscapeLocation, 42..45>,
                 <DiagnosticContextNote::ContainingLiteralLocation, 13..46>,
@@ -1381,7 +1381,7 @@ mod tests {
                 <DiagnosticContextNote::ContainingLiteralLocation, 62..74>;
             Diagnostic::ExpectedLiteralTerminator { .. }, 113,
                 <DiagnosticContextNote::UnterminatedLiteralLocation, 87..114>;
-            Diagnostic::ExpectedInterpolationEnd, 113,
+            Diagnostic::ExpectedInterpolationEnd { .. }, 113,
                 <DiagnosticContextNote::InterpolationStartLocation, 103..105>,
                 <DiagnosticContextNote::ContainingLiteralLocation, 87..114>;
             Diagnostic::ExpectedLiteralTerminator { .. }, 113,

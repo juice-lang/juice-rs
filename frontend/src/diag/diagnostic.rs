@@ -1,49 +1,101 @@
 use std::borrow::Cow;
 
 use juice_core::diag::Colored;
-use juice_macros::diagnostic;
+use juice_macros::Diagnostic;
 
-diagnostic!(
-    #[derive(Debug, Clone)]
-    pub enum Diagnostic<'src> {
-        [error] InvalidCharacter(c: into Colored<char>) => "Invalid character `{}` in source file",
-        [error] UnterminatedComment => "Unterminated block comment",
-        [error] UnexpectedCommentTerminator => "Unexpected block comment terminator",
-        [error] InvalidDigit(digit_name: &'static str, c: into Colored<char>, literal_name: &'static str) =>
-            "Invalid {} `{}` in {} literal",
-        [error] MissingDigit(digit_name: &'static str, literal_name: &'static str) => "Missing {} in {} literal",
-        [error] ExpectedLiteralTerminator(terminator: into Colored<Cow<'static, str>>, literal_name: &'static str) =>
-            "Expected `{}` to terminate {} literal",
-        [error] EmptyLiteral(literal_name: &'static str) => "Empty {} literal",
-        [error] StringInCharLiteral => "Character literal may only contain one codepoint",
-        [error] NewlineInLiteral(literal_name: &'static str) => "Newline in {} literal",
-        [error] ExpectedEscapeSequence(c: into Colored<char> = '\\', literal_name: &'static str) =>
-            "Expected escape sequence after `{}` in {} literal",
-        [error] InvalidUnicodeScalar(hex: into Colored<&'src str>, literal_name: &'static str) =>
-            "Invalid Unicode scalar value `{}` in {} literal",
-        [error] InvalidEscapeSequence(c: into Colored<char>, literal_name: &'static str) =>
-            "Invalid escape sequence `{}` in {} literal",
-        [error] ExpectedUnicodeEscapeBrace(c: into Colored<char>, purpose: &'static str, literal_name: &'static str) =>
-            "Expected `{}` to {} Unicode escape in {} literal",
-        [error] InvalidUnicodeEscapeDigit(c: into Colored<char>, literal_name: &'static str) =>
-            "Invalid Unicode escape digit `{}` in {} literal",
-        [error] MissingUnicodeEscape(literal_name: &'static str) => "Missing Unicode escape sequence in {} literal",
-        [error] OverlongUnicodeEscape(literal_name: &'static str) =>
-            "Unicode escape sequence in {} literal is too long",
-        [error] InsufficientIndentation => "Insufficient indentation in multiline string literal",
-        [error] ExpectedInterpolationEnd(c: into Colored<char> = '}') =>
-            "Expected `{}` to end interpolation in string literal",
-        [error] NewlineInInterpolation => "Newline in string interpolation",
-        [error] MultilineStringInInterpolation => "Multiline string literal in string interpolation",
-        [error] UnexpectedParserError => "Unexpected parser error",
-        [error] ExpectedExpression(context: &'static str) => "Expected expression {}",
-        [error] UnexpectedBinaryOperator => "Unexpected binary operator",
-        [error] ExpectedStatement(context: &'static str) => "Expected statement {}",
-        [error] ExpectedVarDeclName => "Expected variable name in declaration",
-    }
+#[derive(Debug, Clone, Diagnostic)]
+#[diag(offset = 1000)]
+pub enum StaticDiagnostic {
+    #[diag(error = "Error while doing IO: {}")]
+    IoError(#[diag(into)] Colored<String>),
+}
 
-    #[derive(Debug, Clone)]
-    pub enum StaticDiagnostic<'src> {
-        [error] IoError(message: into Colored<String>) => "Error while doing IO: {}",
-    }
-);
+#[derive(Debug, Clone, Diagnostic)]
+pub enum Diagnostic<'src> {
+    #[diag(error = "Invalid character `{}` in source file")]
+    InvalidCharacter(#[diag(into)] Colored<char>),
+    #[diag(error = "Unterminated block comment")]
+    UnterminatedComment,
+    #[diag(error = "Unexpected block comment terminator")]
+    UnexpectedCommentTerminator,
+    #[diag(error = "Invalid {} `{}` in {} literal")]
+    InvalidDigit {
+        digit_name: &'static str,
+        #[diag(into)]
+        c: Colored<char>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Missing {} in {} literal")]
+    MissingDigit {
+        digit_name: &'static str,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Expected `{}` to terminate {} literal")]
+    ExpectedLiteralTerminator {
+        #[diag(into)]
+        terminator: Colored<Cow<'static, str>>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Empty {} literal")]
+    EmptyLiteral(&'static str),
+    #[diag(error = "Character literal may only contain one codepoint")]
+    StringInCharLiteral,
+    #[diag(error = "Newline in {} literal")]
+    NewlineInLiteral(&'static str),
+    #[diag(error = "Expected escape sequence after `{}` in {} literal")]
+    ExpectedEscapeSequence {
+        #[diag(into, default = '\\')]
+        c: Colored<char>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Invalid Unicode scalar value `{}` in {} literal")]
+    InvalidUnicodeScalar {
+        #[diag(into)]
+        hex: Colored<&'src str>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Invalid escape sequence `{}` in {} literal")]
+    InvalidEscapeSequence {
+        #[diag(into)]
+        c: Colored<char>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Expected `{}` to {} Unicode escape in {} literal")]
+    ExpectedUnicodeEscapeBrace {
+        #[diag(into)]
+        c: Colored<char>,
+        purpose: &'static str,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Invalid Unicode escape digit `{}` in {} literal")]
+    InvalidUnicodeEscapeDigit {
+        #[diag(into)]
+        c: Colored<char>,
+        literal_name: &'static str,
+    },
+    #[diag(error = "Missing Unicode escape sequence in {} literal")]
+    MissingUnicodeEscape(&'static str),
+    #[diag(error = "Unicode escape sequence in {} literal is too long")]
+    OverlongUnicodeEscape(&'static str),
+    #[diag(error = "Insufficient indentation in multiline string literal")]
+    InsufficientIndentation,
+    #[diag(error = "Expected `{}` to end interpolation in string literal")]
+    ExpectedInterpolationEnd {
+        #[diag(into, default = '}')]
+        c: Colored<char>,
+    },
+    #[diag(error = "Newline in string interpolation")]
+    NewlineInInterpolation,
+    #[diag(error = "Multiline string literal in string interpolation")]
+    MultilineStringInInterpolation,
+    #[diag(error = "Unexpected parser error")]
+    UnexpectedParserError,
+    #[diag(error = "Expected expression {}")]
+    ExpectedExpression(&'static str),
+    #[diag(error = "Unexpected binary operator")]
+    UnexpectedBinaryOperator,
+    #[diag(error = "Expected statement {}")]
+    ExpectedStatement(&'static str),
+    #[diag(error = "Expected variable name in declaration")]
+    ExpectedVarDeclName,
+}

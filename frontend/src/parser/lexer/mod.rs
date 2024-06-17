@@ -1067,10 +1067,10 @@ mod tests {
             Diagnostic::UnexpectedCommentTerminator, 6,
                 <DiagnosticContextNote::CommentTerminatorLocation, 6..8>,
                 <DiagnosticContextNote::ContainingOperatorLocation, 3..9>,
-                (DiagnosticNote::CommentTerminatorInOperator);
+                (DiagnosticNote::CommentTerminatorInOperator { .. });
             Diagnostic::UnterminatedComment, 58,
                 <DiagnosticContextNote::CommentLocation, 10..59>,
-                (DiagnosticNote::MissingBlockCommentEnd);
+                (DiagnosticNote::MissingBlockCommentEnd { .. });
         );
     }
 

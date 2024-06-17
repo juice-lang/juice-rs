@@ -1,21 +1,34 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, convert::Infallible, marker::PhantomData};
 
 use ariadne::Color;
 use juice_core::diag::Colored;
-use juice_macros::diagnostic_note;
+use juice_macros::DiagnosticNote;
 
-diagnostic_note!(
-    #[derive(Debug, Clone)]
-    pub enum DiagnosticNote<'a> {
-        SimpleNote => "This is a simple note",
-        NoteWithArg(number: u32) => "This is a note with an argument: {}",
-        NoteWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) => "This is a note with many arguments: {}, {}, {}, {}",
-        NoteWithIntoArg(string: into String) => "This is a note with an into argument: {}",
-        NoteWithColoredArg(colored: into Colored<u32>) => "This is a note with a colored argument: {}",
-        NoteWithDefaultArg(a: u32 = 42) => "This is a note with a default argument: {}",
-        NoteWithDefaultIntoArg(string: into Colored<u32> = 42) => "This is a note with a default into argument: {}",
-    }
-);
+#[derive(Debug, Clone, DiagnosticNote)]
+pub enum DiagnosticNote<'a, 'b> {
+    #[diag(note = "This is a simple note")]
+    SimpleNote,
+    #[diag(note = "This is a note with an argument: {}")]
+    NoteWithArg(u32),
+    #[diag(note = "This is a note with many arguments: {}, {}, {}, {}")]
+    NoteWithManyArgs { a: u32, b: i32, c: f32, d: &'a str },
+    #[diag(note = "This is a note with an into argument: {}")]
+    NoteWithIntoArg(#[diag(into)] String),
+    #[diag(note = "This is a note with a colored argument: {}")]
+    NoteWithColoredArg(#[diag(into)] Colored<u32>),
+    #[diag(note = "This is a note with a default argument: {}")]
+    NoteWithDefaultArg {
+        #[diag(default = 42)]
+        a: u32,
+    },
+    #[diag(note = "This is a note with a default into argument: {}")]
+    NoteWithDefaultIntoArg {
+        #[diag(into, default = 42)]
+        colored: Colored<u32>,
+    },
+    #[diag(unreachable)]
+    _Unreachable(Infallible, PhantomData<&'b ()>),
+}
 
 #[allow(clippy::approx_constant)]
 mod tests {

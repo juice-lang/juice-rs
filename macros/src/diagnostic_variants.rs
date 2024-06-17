@@ -1,46 +1,19 @@
 use convert_case::{Case, Casing as _};
-use itertools::Itertools as _;
-use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
-    braced, bracketed, custom_keyword, parenthesized,
     parse::{Parse, ParseStream},
-    punctuated::Punctuated,
-    token::Paren,
-    Expr, Ident, LitStr, Result, Token, Type,
+    spanned::Spanned,
+    Data, DataEnum, DataStruct, DataUnion, DeriveInput, Expr, Field, Fields, GenericParam, Generics, Ident, LitInt,
+    LitStr, Result, Type, Variant,
 };
 
-use crate::{enum_def::EnumDefinition, Error};
-
-mod keyword {
-    use super::*;
-
-    custom_keyword!(color);
-    custom_keyword!(error);
-    custom_keyword!(into);
-    custom_keyword!(warning);
-}
+use crate::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagnosticKind {
+enum DiagnosticKind {
     Error,
     Warning,
-}
-
-impl Parse for DiagnosticKind {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.peek(keyword::error) {
-            input.parse::<keyword::error>()?;
-
-            Ok(Self::Error)
-        } else if input.peek(keyword::warning) {
-            input.parse::<keyword::warning>()?;
-
-            Ok(Self::Warning)
-        } else {
-            Err(input.error(Error::ExpectedDiagnosticKind))
-        }
-    }
 }
 
 impl ToTokens for DiagnosticKind {
@@ -58,15 +31,57 @@ impl ToTokens for DiagnosticKind {
     }
 }
 
-pub struct DiagnosticField {
-    pub name: Ident,
-    pub ty: Type,
-    pub default: Option<Expr>,
-    pub is_into: bool,
+struct DiagnosticField {
+    name: Ident,
+    ty: Type,
+    default: Option<Expr>,
+    is_into: bool,
 }
 
 impl DiagnosticField {
-    pub fn function_argument(&self) -> TokenStream {
+    fn from_field(index: usize, field: Field) -> Result<Self> {
+        let name = field.ident.unwrap_or_else(|| format_ident!("field{}", index));
+
+        if name == "color" {
+            return Err(syn::Error::new_spanned(name, Error::FieldNamedColor));
+        }
+
+        let ty = field.ty;
+
+        let mut default = None;
+        let mut is_into = None;
+        for attr in &field.attrs {
+            if attr.path().is_ident("diag") {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("default") {
+                        if default.replace(meta.value()?.parse()?).is_some() {
+                            return Err(meta.error(Error::DuplicateAttr("default")));
+                        }
+                    } else if meta.path.is_ident("into") {
+                        if is_into.replace(true).is_some() {
+                            return Err(meta.error(Error::DuplicateAttr("into")));
+                        }
+                    } else {
+                        let path = meta.path.to_token_stream().to_string();
+                        return Err(meta.error(Error::UnknownAttribute(path)));
+                    }
+
+                    Ok(())
+                })?;
+            }
+        }
+
+        let is_into = is_into.unwrap_or_default();
+
+        Ok(Self {
+            name,
+            ty,
+            default,
+            is_into,
+        })
+    }
+
+    fn function_argument(&self) -> TokenStream {
         let name = &self.name;
         let ty = &self.ty;
 
@@ -82,93 +97,71 @@ impl DiagnosticField {
     }
 }
 
-impl Parse for DiagnosticField {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.peek(keyword::color) {
-            return Err(input.error(Error::FieldNamedColor));
-        }
-
-        let name = input.parse::<Ident>()?;
-
-        input.parse::<Token![:]>()?;
-
-        let is_into = if input.peek(keyword::into) {
-            input.parse::<keyword::into>()?;
-
-            true
-        } else {
-            false
-        };
-
-        let ty = input.parse::<Type>()?;
-
-        let default = if input.peek(Token![=]) {
-            input.parse::<Token![=]>()?;
-
-            Some(input.parse()?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            name,
-            ty,
-            default,
-            is_into,
-        })
-    }
+trait VariantTrait: Sized {
+    fn from_variant(variant: Variant) -> Result<Self>;
 }
 
-pub struct DiagnosticMessageVariant {
-    pub name: Ident,
-    pub fields: Vec<(usize, DiagnosticField)>,
-    pub default_fields: Vec<(usize, DiagnosticField)>,
-    pub format: LitStr,
+struct DiagnosticMessageVariant {
+    format: Option<LitStr>,
+    name: Ident,
+    fields_named: Option<bool>,
+    fields: Vec<DiagnosticField>,
 }
 
 impl DiagnosticMessageVariant {
-    pub fn enum_variant(&self) -> TokenStream {
-        let name = &self.name;
-        let fields = if self.fields.is_empty() {
-            None
-        } else {
-            let fields = self.fields.iter().map(|(_, field)| {
-                let name = &field.name;
-                let ty = &field.ty;
-
-                quote! { #name: #ty, }
-            });
-
-            Some(quote! {
-                {
-                    #(#fields)*
-                }
-            })
-        };
-
-        quote! {
-            #name #fields
-        }
+    fn is_reachable(&self) -> bool {
+        self.format.is_some()
     }
 
-    pub fn match_pattern(&self, variant_base: TokenStream, ignore_fields: bool) -> TokenStream {
+    fn from_variant_impl(format: Option<LitStr>, name: Ident, fields: Fields) -> Result<Self> {
+        let fields_named = match &fields {
+            Fields::Named(_) => Some(true),
+            Fields::Unnamed(_) => Some(false),
+            Fields::Unit => None,
+        };
+
+        let fields = fields
+            .into_iter()
+            .enumerate()
+            .map(|(i, field)| DiagnosticField::from_field(i, field))
+            .collect::<Result<Vec<_>>>()?;
+
+        if let Some(format) = &format {
+            if fields.is_empty() && format.value().contains("{}") {
+                return Err(syn::Error::new(format.span(), Error::NoFieldsWithFormat));
+            }
+        }
+
+        Ok(Self {
+            format,
+            name,
+            fields_named,
+            fields,
+        })
+    }
+
+    fn match_pattern(&self, variant_base: TokenStream, ignore_fields: bool) -> TokenStream {
         let name = &self.name;
         let pattern_base = quote! {
             #variant_base::#name
         };
 
-        let pattern_fields = if self.fields.is_empty() {
-            None
-        } else {
+        let pattern_fields = if let Some(fields_named) = self.fields_named {
             let inner = if ignore_fields {
                 quote! { .. }
             } else {
-                let names = self.fields.iter().map(|(_, field)| &field.name);
+                let names = self.fields.iter().map(|field| &field.name);
 
                 quote! { #(#names),* }
             };
 
-            Some(quote! { { #inner } })
+            Some(if fields_named {
+                quote! { { #inner } }
+            } else {
+                quote! { (#inner) }
+            })
+        } else {
+            None
         };
 
         quote! {
@@ -177,87 +170,251 @@ impl DiagnosticMessageVariant {
     }
 }
 
-impl Parse for DiagnosticMessageVariant {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let name = input.parse::<Ident>()?;
+impl VariantTrait for DiagnosticMessageVariant {
+    fn from_variant(variant: Variant) -> Result<Self> {
+        let span = variant.span();
 
-        let fields = if input.peek(Paren) {
-            let fields_input;
-            parenthesized!(fields_input in input);
+        let Variant {
+            attrs, ident, fields, ..
+        } = variant;
 
-            Punctuated::<DiagnosticField, Token![,]>::parse_terminated(&fields_input)?
-                .into_iter()
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let mut format = None;
+        let mut unreachable = false;
+        for attr in &attrs {
+            if attr.path().is_ident("diag") {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("note") {
+                        if format.replace(meta.value()?.parse()?).is_some() {
+                            return Err(meta.error(Error::DuplicateAttr("note")));
+                        }
+                    } else if meta.path.is_ident("unreachable") {
+                        if unreachable {
+                            return Err(meta.error(Error::DuplicateAttr("unreachable")));
+                        }
 
-        input.parse::<Token![=>]>()?;
+                        unreachable = true;
+                    } else {
+                        let path = meta.path.to_token_stream().to_string();
+                        return Err(meta.error(Error::UnknownAttribute(path)));
+                    }
 
-        let format = input.parse::<LitStr>()?;
-
-        if fields.is_empty() && format.value().contains("{}") {
-            return Err(syn::Error::new(format.span(), Error::NoFieldsWithFormat));
+                    Ok(())
+                })?;
+            }
         }
 
-        let (fields, default_fields) = fields
-            .into_iter()
-            .enumerate()
-            .partition(|(_, field)| field.default.is_none());
+        if unreachable {
+            if format.is_some() {
+                return Err(syn::Error::new_spanned(format, Error::UnreachableWithFormat));
+            }
+        } else if format.is_none() {
+            return Err(syn::Error::new(span, Error::ExpectedNoteAttr));
+        }
+
+        Self::from_variant_impl(format, ident, fields)
+    }
+}
+
+struct DiagnosticVariant {
+    kind: DiagnosticKind,
+    inner: DiagnosticMessageVariant,
+}
+
+impl DiagnosticVariant {
+    fn is_reachable(&self) -> bool {
+        self.inner.is_reachable()
+    }
+}
+
+impl VariantTrait for DiagnosticVariant {
+    fn from_variant(variant: Variant) -> Result<Self> {
+        let span = variant.span();
+
+        let Variant {
+            attrs, ident, fields, ..
+        } = variant;
+
+        let mut kind = DiagnosticKind::Error;
+        let mut format = None;
+        let mut unreachable = false;
+        for attr in &attrs {
+            if attr.path().is_ident("diag") {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("error") {
+                        if format.replace(meta.value()?.parse()?).is_some() {
+                            return Err(meta.error(Error::DuplicateDiagnosticKindAttr));
+                        }
+                    } else if meta.path.is_ident("warning") {
+                        kind = DiagnosticKind::Warning;
+                        if format.replace(meta.value()?.parse()?).is_some() {
+                            return Err(meta.error(Error::DuplicateDiagnosticKindAttr));
+                        }
+                    } else if meta.path.is_ident("unreachable") {
+                        if unreachable {
+                            return Err(meta.error(Error::DuplicateAttr("unreachable")));
+                        }
+
+                        unreachable = true;
+                    } else {
+                        let path = meta.path.to_token_stream().to_string();
+                        return Err(meta.error(Error::UnknownAttribute(path)));
+                    }
+
+                    Ok(())
+                })?;
+            }
+        }
+
+        if unreachable {
+            if format.is_some() {
+                return Err(syn::Error::new_spanned(format, Error::UnreachableWithFormat));
+            }
+        } else if format.is_none() {
+            return Err(syn::Error::new(span, Error::ExpectedDiagnosticKindAttr));
+        }
 
         Ok(Self {
-            name,
-            fields,
-            default_fields,
-            format,
+            kind,
+            inner: DiagnosticMessageVariant::from_variant_impl(format, ident, fields)?,
         })
     }
 }
 
-pub struct DiagnosticVariant {
-    pub kind: DiagnosticKind,
-    pub inner: DiagnosticMessageVariant,
+struct EnumData<V> {
+    code_offset: Option<(usize, Span)>,
+    ident: Ident,
+    generics: Generics,
+    variants: Vec<V>,
 }
 
-impl Parse for DiagnosticVariant {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let kind_input;
-        bracketed!(kind_input in input);
+impl<V> EnumData<V> {
+    fn generics_stream(&self) -> TokenStream {
+        let lt_token = &self.generics.lt_token;
+        let gt_token = &self.generics.gt_token;
 
-        let kind = kind_input.parse::<DiagnosticKind>()?;
+        let params = &self.generics.params;
 
-        let inner = input.parse::<DiagnosticMessageVariant>()?;
+        quote! {
+            #lt_token #params #gt_token
+        }
+    }
 
-        Ok(Self { kind, inner })
+    fn stripped_generics_stream(&self) -> TokenStream {
+        let lt_token = &self.generics.lt_token;
+        let gt_token = &self.generics.gt_token;
+
+        let params = self.generics.params.iter().map(|param| match param {
+            GenericParam::Type(param) => {
+                let ident = &param.ident;
+                quote! { #ident }
+            }
+            GenericParam::Lifetime(param) => {
+                let lifetime = &param.lifetime;
+                quote! { #lifetime }
+            }
+            GenericParam::Const(param) => {
+                let ident = &param.ident;
+
+                quote! { #ident }
+            }
+        });
+
+        quote! {
+            #lt_token #(#params),* #gt_token
+        }
     }
 }
 
-pub struct Diagnostic {
-    pub definition: EnumDefinition,
-    pub variants: Vec<DiagnosticVariant>,
+impl<V: VariantTrait> Parse for EnumData<V> {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let DeriveInput {
+            attrs,
+            ident,
+            generics,
+            data,
+            ..
+        } = input.parse::<DeriveInput>()?;
+
+        let variants = match data {
+            Data::Enum(DataEnum { variants, .. }) => variants,
+            Data::Struct(DataStruct { struct_token, .. }) => {
+                return Err(syn::Error::new_spanned(struct_token, Error::NotAnEnum));
+            }
+            Data::Union(DataUnion { union_token, .. }) => {
+                return Err(syn::Error::new_spanned(union_token, Error::NotAnEnum));
+            }
+        };
+
+        let variants = variants.into_iter().map(V::from_variant).collect::<Result<_>>()?;
+
+        let mut code_offset = None;
+        for attr in &attrs {
+            if attr.path().is_ident("diag") {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("offset") {
+                        if code_offset
+                            .replace((meta.value()?.parse::<LitInt>()?.base10_parse()?, attr.span()))
+                            .is_some()
+                        {
+                            return Err(meta.error(Error::DuplicateAttr("offset")));
+                        }
+                    } else {
+                        let path = meta.path.to_token_stream().to_string();
+                        return Err(meta.error(Error::UnknownAttribute(path)));
+                    }
+
+                    Ok(())
+                })?;
+            }
+        }
+
+        Ok(Self {
+            code_offset,
+            ident,
+            generics,
+            variants,
+        })
+    }
 }
 
+pub struct Diagnostic(EnumData<DiagnosticVariant>);
+
 impl Diagnostic {
-    pub fn enum_definition(&self, start_index: usize) -> TokenStream {
-        let name = &self.definition.name;
-        let definition = &self.definition;
+    fn impl_block(&self) -> TokenStream {
+        let code_offset = self.0.code_offset.map(|(offset, _)| offset).unwrap_or_default();
+        let name = &self.0.ident;
 
-        let generic_parameters = self.definition.generic_parameters();
+        let generic_parameters = self.0.generics_stream();
+        let stripped_generic_parameters = self.0.stripped_generics_stream();
+        let where_clause = &self.0.generics.where_clause;
 
-        let enum_variants = self.variants.iter().map(|variant| variant.inner.enum_variant());
+        let constructor_functions = self
+            .0
+            .variants
+            .iter()
+            .filter(|variant| variant.is_reachable())
+            .map(|variant| {
+                let variant = &variant.inner;
+                let name = &variant.name;
+                let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
-        let constructor_functions = self.variants.iter().map(|variant| {
-            let name = &variant.inner.name;
-            let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
+                let (fields, default_fields) = variant
+                    .fields
+                    .iter()
+                    .partition::<Vec<_>, _>(|field| field.default.is_none());
 
-            let arguments = variant.inner.fields.iter().map(|(_, field)| field.function_argument());
+                let arguments = fields.iter().map(|field| field.function_argument());
 
-            let into_assignments = variant
-                .inner
-                .fields
-                .iter()
-                .filter(|(_, field)| field.is_into)
-                .map(|(_, field)| {
+                let default_assignments = default_fields.iter().map(|field| {
+                    let name = &field.name;
+                    let default = field.default.as_ref().unwrap();
+
+                    quote! {
+                        let #name = #default;
+                    }
+                });
+
+                let into_assignments = variant.fields.iter().filter(|field| field.is_into).map(|field| {
                     let name = &field.name;
 
                     quote! {
@@ -265,36 +422,45 @@ impl Diagnostic {
                     }
                 });
 
-            let fields = if variant.inner.fields.is_empty() {
-                None
-            } else {
-                let field_names = variant.inner.fields.iter().map(|(_, field)| &field.name);
+                let fields = if let Some(fields_named) = variant.fields_named {
+                    let field_names = variant.fields.iter().map(|field| &field.name);
 
-                Some(quote! {
-                    {
-                        #(#field_names),*
+                    Some(if fields_named {
+                        quote! {
+                            {
+                                #(#field_names),*
+                            }
+                        }
+                    } else {
+                        quote! { (#(#field_names),*) }
+                    })
+                } else {
+                    None
+                };
+
+                quote! {
+                    pub fn #fn_name(#(#arguments),*) -> Self {
+                        #(
+                            #default_assignments
+                        )*
+
+                        #(
+                            #into_assignments
+                        )*
+
+                        Self::#name #fields
                     }
-                })
-            };
-
-            quote! {
-                pub fn #fn_name(#(#arguments),*) -> Self {
-                    #(
-                        #into_assignments
-                    )*
-
-                    Self::#name #fields
                 }
-            }
-        });
+            });
 
-        let match_value = if self.variants.is_empty() && self.definition.lifetime.is_none() {
+        let match_value = if self.0.variants.is_empty() {
             quote! { *self }
         } else {
             quote! { self }
         };
 
         let match_patterns = self
+            .0
             .variants
             .iter()
             .map(|variant| {
@@ -308,85 +474,73 @@ impl Diagnostic {
             ::juice_core::diag::DiagnosticCode
         };
 
+        let unreachable = quote! {
+            ::core::unreachable!()
+        };
+
         let error_code_match_arms = match_patterns.iter().enumerate().map(|(i, (variant, pattern))| {
             let kind = variant.kind;
 
-            let i = (i + start_index) as u32;
+            let i = (i + code_offset) as u32;
 
-            quote! {
-                #pattern => #diagnostic_code::new(#kind, #i)
+            if variant.is_reachable() {
+                quote! {
+                    #pattern => #diagnostic_code::new(#kind, #i)
+                }
+            } else {
+                quote! {
+                    #pattern => #unreachable
+                }
             }
         });
 
         let diagnostic_kind_match_arms = match_patterns.iter().map(|(variant, pattern)| {
             let kind = variant.kind;
 
-            quote! {
-                #pattern => #kind
+            if variant.is_reachable() {
+                quote! {
+                    #pattern => #kind
+                }
+            } else {
+                quote! {
+                    #pattern => #unreachable
+                }
             }
         });
 
-        let message_match_arms = self.variants.iter().map(|variant| {
-            let pattern = variant.inner.match_pattern(quote! { Self }, false);
+        let message_match_arms = self.0.variants.iter().map(|variant| {
+            let variant = &variant.inner;
+            let pattern = variant.match_pattern(quote! { Self }, !variant.is_reachable());
 
-            let format = &variant.inner.format;
+            if let Some(format) = &variant.format {
+                let formatted_message = if variant.fields.is_empty() {
+                    quote! { #format.to_string() }
+                } else {
+                    let colored_fields = variant.fields.iter().map(|field| {
+                        let name = &field.name;
 
-            let formatted_message = if variant.inner.fields.is_empty() && variant.inner.default_fields.is_empty() {
-                quote! { #format.to_string() }
-            } else {
-                let fields = variant.inner.fields.iter();
-                let default_fields = variant.inner.default_fields.iter();
-                let colored_fields = fields.merge_by(default_fields, |a, b| a.0 < b.0).map(|(_, field)| {
-                    let name = &field.name;
-
-                    let value = if let Some(default) = field.default.as_ref() {
-                        if field.is_into {
-                            let ty = &field.ty;
-                            quote! {
-                                <#ty>::from(#default)
-                            }
-                        } else {
-                            quote! { #default }
+                        quote! {
+                            ::juice_core::diag::DiagnosticArg::with_color(#name, color)
                         }
-                    } else {
-                        quote! { #name }
-                    };
+                    });
 
                     quote! {
-                        ::juice_core::diag::DiagnosticArg::with_color(#value, color)
+                        ::std::format!(#format, #(#colored_fields),*)
                     }
-                });
+                };
 
                 quote! {
-                    format!(#format, #(#colored_fields),*)
+                    #pattern => #formatted_message
                 }
-            };
-
-            quote! {
-                #pattern => #formatted_message
+            } else {
+                quote! {
+                    #pattern => #unreachable
+                }
             }
         });
-
-        let unreachable_variant = self.definition.lifetime.as_ref().map(|(_, lifetime, _)| {
-            quote! {
-                _Unreachable(::core::convert::Infallible, ::core::marker::PhantomData<&#lifetime ()>),
-            }
-        });
-
-        let unreachable_match_arm = self.definition.lifetime.as_ref().and(Some(quote! {
-            Self::_Unreachable(_, _) => unreachable!(),
-        }));
 
         quote! {
-            #definition {
-                #(
-                    #enum_variants,
-                )*
-                #unreachable_variant
-            }
-
-            #[automatically_derived]
-            impl #generic_parameters #name #generic_parameters {
+            impl #generic_parameters #name #stripped_generic_parameters #where_clause {
                 #(
                     #constructor_functions
                 )*
@@ -396,7 +550,6 @@ impl Diagnostic {
                         #(
                             #error_code_match_arms,
                         )*
-                        #unreachable_match_arm
                     }
                 }
 
@@ -405,7 +558,6 @@ impl Diagnostic {
                         #(
                             #diagnostic_kind_match_arms,
                         )*
-                        #unreachable_match_arm
                     }
                 }
 
@@ -419,7 +571,6 @@ impl Diagnostic {
                         #(
                             #message_match_arms,
                         )*
-                        #unreachable_match_arm
                     }
                 }
             }
@@ -429,72 +580,52 @@ impl Diagnostic {
 
 impl Parse for Diagnostic {
     fn parse(input: ParseStream) -> Result<Self> {
-        let definition = input.parse::<EnumDefinition>()?;
-
-        let braced_input;
-        braced!(braced_input in input);
-
-        let variants = Punctuated::<DiagnosticVariant, Token![,]>::parse_terminated(&braced_input)?
-            .into_iter()
-            .collect();
-
-        Ok(Self { definition, variants })
+        input.parse().map(Self)
     }
 }
 
-pub struct Diagnostics {
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-impl Parse for Diagnostics {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let mut diagnostics = Vec::new();
-
-        while input.peek(Token![enum]) || input.peek(Token![pub]) || input.peek(Token![#]) {
-            diagnostics.push(input.parse()?);
-        }
-
-        Ok(Self { diagnostics })
-    }
-}
-
-impl ToTokens for Diagnostics {
+impl ToTokens for Diagnostic {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        self.diagnostics.iter().fold(0, |index, diagnostic| {
-            let definition = diagnostic.enum_definition(index);
-
-            tokens.extend(definition);
-
-            index + diagnostic.variants.len()
-        });
+        tokens.extend(self.impl_block());
     }
 }
 
-pub struct DiagnosticNote {
-    pub definition: EnumDefinition,
-    pub variants: Vec<DiagnosticMessageVariant>,
-}
+pub struct DiagnosticNote(EnumData<DiagnosticMessageVariant>);
 
 impl DiagnosticNote {
-    fn enum_definition(&self) -> TokenStream {
-        let name = &self.definition.name;
-        let definition = &self.definition;
+    fn impl_block(&self) -> TokenStream {
+        let name = &self.0.ident;
 
-        let generic_parameters = self.definition.generic_parameters();
+        let generic_parameters = self.0.generics_stream();
+        let stripped_generic_parameters = self.0.stripped_generics_stream();
+        let where_clause = &self.0.generics.where_clause;
 
-        let enum_variants = self.variants.iter().map(|variant| variant.enum_variant());
+        let constructor_functions = self
+            .0
+            .variants
+            .iter()
+            .filter(|variant| variant.is_reachable())
+            .map(|variant| {
+                let name = &variant.name;
+                let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
 
-        let constructor_functions = self.variants.iter().map(|variant| {
-            let name = &variant.name;
-            let fn_name = Ident::new(&name.to_string().to_case(Case::Snake), name.span());
+                let (fields, default_fields) = variant
+                    .fields
+                    .iter()
+                    .partition::<Vec<_>, _>(|field| field.default.is_none());
 
-            let arguments = variant.fields.iter().map(|(_, field)| field.function_argument());
+                let arguments = fields.iter().map(|field| field.function_argument());
 
-            let into_assignments = variant
-                .fields
-                .iter()
-                .filter(|(_, field)| field.is_into)
-                .map(|(_, field)| {
+                let default_assignments = default_fields.iter().map(|field| {
+                    let name = &field.name;
+                    let default = field.default.as_ref().unwrap();
+
+                    quote! {
+                        let #name = #default;
+                    }
+                });
+
+                let into_assignments = variant.fields.iter().filter(|field| field.is_into).map(|field| {
                     let name = &field.name;
 
                     quote! {
@@ -502,90 +633,69 @@ impl DiagnosticNote {
                     }
                 });
 
-            let fields = if variant.fields.is_empty() {
-                None
-            } else {
-                let field_names = variant.fields.iter().map(|(_, field)| &field.name);
+                let fields = if let Some(fields_named) = variant.fields_named {
+                    let field_names = variant.fields.iter().map(|field| &field.name);
 
-                Some(quote! {
-                    {
-                        #(#field_names),*
-                    }
-                })
-            };
-
-            quote! {
-                pub fn #fn_name(#(#arguments),*) -> Self {
-                    #(
-                        #into_assignments
-                    )*
-
-                    Self::#name #fields
-                }
-            }
-        });
-
-        let message_match_arms = self.variants.iter().map(|variant| {
-            let pattern = variant.match_pattern(quote! { Self }, false);
-
-            let format = &variant.format;
-
-            let formatted_message = if variant.fields.is_empty() && variant.default_fields.is_empty() {
-                quote! { #format.to_string() }
-            } else {
-                let fields = variant.fields.iter();
-                let default_fields = variant.default_fields.iter();
-                let colored_fields = fields.merge_by(default_fields, |a, b| a.0 < b.0).map(|(_, field)| {
-                    let name = &field.name;
-
-                    let value = if let Some(default) = field.default.as_ref() {
-                        if field.is_into {
-                            let ty = &field.ty;
-                            quote! {
-                                <#ty>::from(#default)
+                    Some(if fields_named {
+                        quote! {
+                            {
+                                #(#field_names),*
                             }
-                        } else {
-                            quote! { #default }
                         }
                     } else {
-                        quote! { #name }
-                    };
-
-                    quote! {
-                        ::juice_core::diag::DiagnosticArg::with_color(#value, color)
-                    }
-                });
+                        quote! { (#(#field_names),*) }
+                    })
+                } else {
+                    None
+                };
 
                 quote! {
-                    format!(#format, #(#colored_fields),*)
+                    pub fn #fn_name(#(#arguments),*) -> Self {
+                        #(
+                            #default_assignments
+                        )*
+
+                        #(
+                            #into_assignments
+                        )*
+
+                        Self::#name #fields
+                    }
                 }
-            };
+            });
 
-            quote! {
-                #pattern => #formatted_message
+        let message_match_arms = self.0.variants.iter().map(|variant| {
+            let pattern = variant.match_pattern(quote! { Self }, !variant.is_reachable());
+
+            if let Some(format) = &variant.format {
+                let formatted_message = if variant.fields.is_empty() {
+                    quote! { #format.to_string() }
+                } else {
+                    let colored_fields = variant.fields.iter().map(|field| {
+                        let name = &field.name;
+
+                        quote! {
+                            ::juice_core::diag::DiagnosticArg::with_color(#name, color)
+                        }
+                    });
+
+                    quote! {
+                        ::std::format!(#format, #(#colored_fields),*)
+                    }
+                };
+
+                quote! {
+                    #pattern => #formatted_message
+                }
+            } else {
+                quote! {
+                    #pattern => ::core::unreachable!()
+                }
             }
         });
-
-        let unreachable_variant = self.definition.lifetime.as_ref().map(|(_, lifetime, _)| {
-            quote! {
-                _Unreachable(::core::convert::Infallible, ::core::marker::PhantomData<&#lifetime ()>),
-            }
-        });
-
-        let unreachable_match_arm = self.definition.lifetime.as_ref().and(Some(quote! {
-            Self::_Unreachable(_, _) => unreachable!(),
-        }));
 
         quote! {
-            #definition {
-                #(
-                    #enum_variants,
-                )*
-                #unreachable_variant
-            }
-
-            #[automatically_derived]
-            impl #generic_parameters #name #generic_parameters {
+            impl #generic_parameters #name #stripped_generic_parameters #where_clause {
                 #(
                     #constructor_functions
                 )*
@@ -600,7 +710,6 @@ impl DiagnosticNote {
                         #(
                             #message_match_arms,
                         )*
-                        #unreachable_match_arm
                     }
                 }
             }
@@ -610,23 +719,18 @@ impl DiagnosticNote {
 
 impl Parse for DiagnosticNote {
     fn parse(input: ParseStream) -> Result<Self> {
-        let definition = input.parse::<EnumDefinition>()?;
+        let enum_data = input.parse::<EnumData<_>>()?;
 
-        let braced_input;
-        braced!(braced_input in input);
+        if let Some((_, span)) = enum_data.code_offset {
+            return Err(syn::Error::new(span, Error::DiagnosticNoteOffsetAttr));
+        }
 
-        let variants = Punctuated::<DiagnosticMessageVariant, Token![,]>::parse_terminated(&braced_input)?
-            .into_iter()
-            .collect();
-
-        Ok(Self { definition, variants })
+        Ok(Self(enum_data))
     }
 }
 
 impl ToTokens for DiagnosticNote {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let definition = self.enum_definition();
-
-        tokens.extend(definition);
+        tokens.extend(self.impl_block());
     }
 }

@@ -1,58 +1,99 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, convert::Infallible, marker::PhantomData};
 
 use ariadne::Color;
 use juice_core::diag::{Colored, DiagnosticCode, DiagnosticKind};
-use juice_macros::diagnostic;
+use juice_macros::Diagnostic;
 
-diagnostic!(
-    #[derive(Debug, Clone)]
-    pub enum Diagnostic<'a> {
-        [error] SimpleError => "This is a simple error",
-        [warning] SimpleWarning => "This is a simple warning",
-        [error] ErrorWithArg(number: u32) => "This is an error with an argument: {}",
-        [warning] WarningWithArg(string: &'static str) => "This is a warning with an argument: {}",
-        [error] ErrorWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) =>
-            "This is an error with many arguments: {}, {}, {}, {}",
-        [warning] WarningWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) =>
-            "This is a warning with many arguments: {}, {}, {}, {}",
-        [error] ErrorWithIntoArg(string: into String) => "This is an error with an into argument: {}",
-        [warning] WarningWithIntoArg(string: into String) => "This is a warning with an into argument: {}",
-        [error] ErrorWithColoredArg(colored: into Colored<u32>) => "This is an error with a colored argument: {}",
-        [warning] WarningWithColoredArg(colored: into Colored<u32>) => "This is a warning with a colored argument: {}",
-        [error] ErrorWithDefaultArg(string: &str = "hello") => "This is an error with a default argument: {}",
-        [warning] WarningWithDefaultArg(string: &str = "hello") => "This is a warning with a default argument: {}",
-        [error] ErrorWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
-            "This is an error with a default into argument: {}",
-        [warning] WarningWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
-            "This is a warning with a default into argument: {}",
-    }
+#[derive(Debug, Clone, Diagnostic)]
+pub enum Diagnostic<'a, 'b> {
+    #[diag(error = "This is a simple error")]
+    SimpleError,
+    #[diag(warning = "This is a simple warning")]
+    SimpleWarning,
+    #[diag(error = "This is an error with an argument: {}")]
+    ErrorWithArg(u32),
+    #[diag(warning = "This is a warning with an argument: {}")]
+    WarningWithArg(&'static str),
+    #[diag(error = "This is an error with many arguments: {}, {}, {}, {}")]
+    ErrorWithManyArgs { a: u32, b: i32, c: f32, d: &'a str },
+    #[diag(warning = "This is a warning with many arguments: {}, {}, {}, {}")]
+    WarningWithManyArgs { a: u32, b: i32, c: f32, d: &'a str },
+    #[diag(error = "This is an error with an into argument: {}")]
+    ErrorWithIntoArg(#[diag(into)] String),
+    #[diag(warning = "This is a warning with an into argument: {}")]
+    WarningWithIntoArg(#[diag(into)] String),
+    #[diag(error = "This is an error with a colored argument: {}")]
+    ErrorWithColoredArg(#[diag(into)] Colored<u32>),
+    #[diag(warning = "This is a warning with a colored argument: {}")]
+    WarningWithColoredArg(#[diag(into)] Colored<u32>),
+    #[diag(error = "This is an error with a default argument: {}")]
+    ErrorWithDefaultArg {
+        #[diag(default = "hello")]
+        string: &'static str,
+    },
+    #[diag(warning = "This is a warning with a default argument: {}")]
+    WarningWithDefaultArg {
+        #[diag(default = "hello")]
+        string: &'static str,
+    },
+    #[diag(error = "This is an error with a default into argument: {}")]
+    ErrorWithDefaultIntoArg {
+        #[diag(into, default = "hello")]
+        string: Colored<&'static str>,
+    },
+    #[diag(warning = "This is a warning with a default into argument: {}")]
+    WarningWithDefaultIntoArg {
+        #[diag(into, default = "hello")]
+        string: Colored<&'static str>,
+    },
+    #[diag(unreachable)]
+    _Unreachable(Infallible, PhantomData<&'b ()>),
+}
 
-    #[derive(Debug, Clone)]
-    pub enum StaticDiagnostic<'a> {
-        [error] StaticError => "This is a static error",
-        [warning] StaticWarning => "This is a static warning",
-        [error] StaticErrorWithArg(number: u32) => "This is a static error with an argument: {}",
-        [warning] StaticWarningWithArg(string: &'static str) => "This is a static warning with an argument: {}",
-        [error] StaticErrorWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) =>
-            "This is a static error with many arguments: {}, {}, {}, {}",
-        [warning] StaticWarningWithManyArgs(a: u32, b: i32, c: f32, d: &'a str) =>
-            "This is a static warning with many arguments: {}, {}, {}, {}",
-        [error] StaticErrorWithIntoArg(string: into String) => "This is a static error with an into argument: {}",
-        [warning] StaticWarningWithIntoArg(string: into String) => "This is a static warning with an into argument: {}",
-        [error] StaticErrorWithColoredArg(colored: into Colored<u32>) =>
-            "This is a static error with a colored argument: {}",
-        [warning] StaticWarningWithColoredArg(colored: into Colored<u32>) =>
-            "This is a static warning with a colored argument: {}",
-        [error] StaticErrorWithDefaultArg(string: &str = "hello") =>
-            "This is a static error with a default argument: {}",
-        [warning] StaticWarningWithDefaultArg(string: &str = "hello") =>
-            "This is a static warning with a default argument: {}",
-        [error] StaticErrorWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
-            "This is a static error with a default into argument: {}",
-        [warning] StaticWarningWithDefaultIntoArg(string: into Colored<&str> = "hello") =>
-            "This is a static warning with a default into argument: {}",
-    }
-);
+#[derive(Debug, Clone, Diagnostic)]
+#[diag(offset = 14)]
+pub enum StaticDiagnostic<'a> {
+    #[diag(error = "This is a static error")]
+    StaticError,
+    #[diag(warning = "This is a static warning")]
+    StaticWarning,
+    #[diag(error = "This is a static error with an argument: {}")]
+    StaticErrorWithArg(u32),
+    #[diag(warning = "This is a static warning with an argument: {}")]
+    StaticWarningWithArg(&'static str),
+    #[diag(error = "This is a static error with many arguments: {}, {}, {}, {}")]
+    StaticErrorWithManyArgs { a: u32, b: i32, c: f32, d: &'a str },
+    #[diag(warning = "This is a static warning with many arguments: {}, {}, {}, {}")]
+    StaticWarningWithManyArgs { a: u32, b: i32, c: f32, d: &'a str },
+    #[diag(error = "This is a static error with an into argument: {}")]
+    StaticErrorWithIntoArg(#[diag(into)] String),
+    #[diag(warning = "This is a static warning with an into argument: {}")]
+    StaticWarningWithIntoArg(#[diag(into)] String),
+    #[diag(error = "This is a static error with a colored argument: {}")]
+    StaticErrorWithColoredArg(#[diag(into)] Colored<u32>),
+    #[diag(warning = "This is a static warning with a colored argument: {}")]
+    StaticWarningWithColoredArg(#[diag(into)] Colored<u32>),
+    #[diag(error = "This is a static error with a default argument: {}")]
+    StaticErrorWithDefaultArg {
+        #[diag(default = "hello")]
+        string: &'static str,
+    },
+    #[diag(warning = "This is a static warning with a default argument: {}")]
+    StaticWarningWithDefaultArg {
+        #[diag(default = "hello")]
+        string: &'static str,
+    },
+    #[diag(error = "This is a static error with a default into argument: {}")]
+    StaticErrorWithDefaultIntoArg {
+        #[diag(into, default = "hello")]
+        string: Colored<&'static str>,
+    },
+    #[diag(warning = "This is a static warning with a default into argument: {}")]
+    StaticWarningWithDefaultIntoArg {
+        #[diag(into, default = "hello")]
+        string: Colored<&'static str>,
+    },
+}
 
 #[allow(clippy::approx_constant)]
 mod tests {
