@@ -3,6 +3,7 @@ use std::{io, sync::Arc};
 use ariadne::{Color, Fmt as _};
 use derive_more::From;
 use itertools::Itertools as _;
+use serde::Serialize;
 use thousands::{digits::ASCII_HEXADECIMAL, Separable as _, SeparatorPolicy};
 
 use crate::{
@@ -16,16 +17,45 @@ const UNDERSCORE_HEX_SEPARATOR: SeparatorPolicy = SeparatorPolicy {
     digits: ASCII_HEXADECIMAL,
 };
 
-#[derive(Debug, Clone, From)]
+fn format_bigint(v: &[u64]) -> String {
+    let (first, rest) = v.split_last().unwrap();
+
+    let first = format!("{first:x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR);
+
+    let rest = rest.iter().rev().format_with("_", |part, f| {
+        f(&format!("{part:016x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR))
+    });
+
+    format!("0x{first}_{rest}")
+}
+
+fn serialize_bigint<S>(v: &[u64], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format_bigint(v))
+}
+
+#[derive(Debug, Clone, From, Serialize)]
+#[serde(tag = "type", content = "value")]
 pub enum DumpField<'src> {
-    Bool(bool),
-    Int(u64),
+    #[serde(rename = "bigint", serialize_with = "serialize_bigint")]
     BigInt(Arc<[u64]>),
+    #[serde(untagged)]
+    Bool(bool),
+    #[serde(untagged)]
+    Int(u64),
+    #[serde(untagged)]
     Float(f64),
+    #[serde(untagged)]
     Char(char),
+    #[serde(untagged)]
     String(&'src str),
+    #[serde(untagged)]
     ArcStr(Arc<str>),
+    #[serde(untagged)]
     List(Vec<Dump<'src>>),
+    #[serde(untagged)]
     Dump(Dump<'src>),
 }
 
@@ -38,21 +68,13 @@ impl DumpField<'_> {
         let indent_str = "  ".repeat(indentation);
 
         match self {
-            Self::Bool(v) => write!(stream, "{v}"),
-            Self::Int(v) => write!(stream, "{v}"),
             Self::BigInt(v) => {
-                let (first, rest) = v.split_last().unwrap();
-
-                let first = format!("{first:x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR);
-
-                let rest = rest.iter().rev().format_with("_", |part, f| {
-                    f(&format!("{part:016x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR))
-                });
-
-                write!(stream, "0x{first}_{rest}")?;
+                write!(stream, "{}", format_bigint(v))?;
 
                 Ok(())
             }
+            Self::Bool(v) => write!(stream, "{v}"),
+            Self::Int(v) => write!(stream, "{v}"),
             Self::Float(v) => write!(stream, "{v}"),
             Self::Char(c) => write!(stream, "{c:?}"),
             Self::String(s) => write!(stream, "{s:?}"),
@@ -75,10 +97,13 @@ impl DumpField<'_> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Dump<'src> {
+    #[serde(rename = "node")]
     pub name: &'static str,
+    #[serde(rename = "error", skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    #[serde(flatten, with = "tuple_vec_map")]
     pub fields: Vec<(&'static str, DumpField<'src>)>,
 }
 

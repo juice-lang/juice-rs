@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use colored_json::write_colored_json;
 use juice_core::{dump::ToDump, OutputStream};
 
 use crate::{
@@ -22,8 +23,8 @@ macro_rules! check_error {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Action {
-    DumpParse,
-    DumpAst,
+    DumpParse { json: bool },
+    DumpAst { json: bool },
     EmitIr,
     EmitObject,
 }
@@ -78,8 +79,19 @@ impl Runner {
         let stmts = parser.parse_stmt_list(&diagnostics)?;
 
         if let Some(stmts) = stmts {
-            if self.args.action == Action::DumpParse {
-                stmts.to_dump().write(self.args.output_stream.as_mut())?;
+            if let Action::DumpParse { json } = self.args.action {
+                if json {
+                    let dump = stmts.to_dump();
+
+                    if self.args.output_stream.is_terminal() {
+                        write_colored_json(&dump, &mut self.args.output_stream)?;
+                        writeln!(self.args.output_stream)?;
+                    } else {
+                        serde_json::to_writer(self.args.output_stream.as_mut(), &dump)?;
+                    }
+                } else {
+                    stmts.to_dump().write(self.args.output_stream.as_mut())?;
+                }
 
                 check_error!(diagnostics);
 

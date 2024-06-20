@@ -11,8 +11,12 @@ use crate::cli::OutputFilePath;
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum Action {
-    DumpParse,
-    DumpAst,
+    DumpParse {
+        json: bool,
+    },
+    DumpAst {
+        json: bool,
+    },
     DumpIr,
     EmitIr,
     EmitObject,
@@ -31,7 +35,7 @@ impl Action {
             Some(OutputFilePath::File(filename)) => path::absolute(filename).map(OutputFilePath::File),
             None => {
                 let extension = match self {
-                    Self::DumpParse | Self::DumpAst | Self::DumpIr => return Ok(OutputFilePath::Stdout),
+                    Self::DumpParse { .. } | Self::DumpAst { .. } | Self::DumpIr => return Ok(OutputFilePath::Stdout),
                     Self::EmitIr => "ll",
                     Self::EmitObject => "o",
                     Self::EmitExecutable => "",

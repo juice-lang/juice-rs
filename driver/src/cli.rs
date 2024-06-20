@@ -57,7 +57,7 @@ mod private {
     use super::*;
 
     #[derive(Debug, Args)]
-    #[clap(group = clap::ArgGroup::new("frontend-action").multiple(false))]
+    #[clap(group = clap::ArgGroup::new("frontend-action").multiple(false).required(true))]
     pub struct FrontendArgs {
         /// The input file to compile
         #[arg(long = "input-file", value_parser = absolute_path_parser, value_name = "FILE")]
@@ -77,6 +77,21 @@ mod private {
         /// Emit an object file
         #[arg(long, group = "frontend-action", help_heading = "Actions")]
         pub emit_object: bool,
+        /// Dump the ast as JSON (can only be used together with the `dump-parse` and `dump-ast` actions)
+        #[arg(long, help_heading = "Actions")]
+        pub json: bool,
+    }
+
+    impl FrontendArgs {
+        pub fn validate(&self, mut cmd: clap::Command) {
+            if self.json && !(self.dump_parse || self.dump_ast) {
+                const MESSAGE: &str = color_print::cstr!(
+                    "<bold>--json</bold> can only be used together with \
+                    <bold>--dump-parse</bold> or <bold>--dump-ast</bold>"
+                );
+                cmd.error(ErrorKind::ArgumentConflict, MESSAGE).exit();
+            }
+        }
     }
 
     fn absolute_path_parser(s: &str) -> Result<PathBuf, String> {
@@ -104,6 +119,15 @@ mod private {
         Frontend(FrontendArgs),
         /// Run the run-eval-print loop
         Repl,
+    }
+
+    impl Command {
+        pub fn validate(&self, cmd: clap::Command) {
+            match self {
+                Self::Frontend(args) => args.validate(cmd),
+                Self::Repl => {}
+            }
+        }
     }
 
     #[derive(Debug, Args)]
@@ -136,6 +160,21 @@ mod private {
         /// Emit an executable (default)
         #[arg(long, group = "main-action", help_heading = "Actions")]
         pub emit_executable: bool,
+        /// Dump the ast as JSON (can only be used together with the `dump-parse` and `dump-ast` actions)
+        #[arg(long, help_heading = "Actions")]
+        pub json: bool,
+    }
+
+    impl MainArgs {
+        pub fn validate(&self, mut cmd: clap::Command) {
+            if self.json && !(self.dump_parse || self.dump_ast) {
+                const MESSAGE: &str = color_print::cstr!(
+                    "<bold>--json</bold> can only be used together with \
+                    <bold>--dump-parse</bold> or <bold>--dump-ast</bold>"
+                );
+                cmd.error(ErrorKind::ArgumentConflict, MESSAGE).exit();
+            }
+        }
     }
 
     fn output_file_path_parser(s: &str) -> Result<OutputFilePath, String> {
@@ -155,9 +194,9 @@ impl TryFrom<private::FrontendArgs> for FrontendArgs {
         let output_stream = args.output_filepath.try_into_stream()?;
 
         let action = if args.dump_parse {
-            FrontendAction::DumpParse
+            FrontendAction::DumpParse { json: args.json }
         } else if args.dump_ast {
-            FrontendAction::DumpAst
+            FrontendAction::DumpAst { json: args.json }
         } else if args.emit_ir {
             FrontendAction::EmitIr
         } else {
@@ -179,9 +218,9 @@ impl TryFrom<private::MainArgs> for MainArgs {
         let input_filepath = path::absolute(&args.input_filename)?;
 
         let action = if args.dump_parse {
-            MainAction::DumpParse
+            MainAction::DumpParse { json: args.json }
         } else if args.dump_ast {
-            MainAction::DumpAst
+            MainAction::DumpAst { json: args.json }
         } else if args.dump_ir {
             MainAction::DumpIr
         } else if args.emit_ir {
@@ -223,17 +262,21 @@ impl TryFrom<private::Command> for Command {
 
 impl Cli {
     pub fn command(self) -> DriverResult<Command> {
+        let mut cmd = <Self as CommandFactory>::command();
         if let Some(command) = self.command {
+            command.validate(cmd);
+
             command.try_into()
         } else {
             let Some(main_args) = self.main_args else {
-                <Self as CommandFactory>::command()
-                    .error(
-                        ErrorKind::MissingRequiredArgument,
-                        "either a subcommand or main arguments are required",
-                    )
-                    .exit();
+                cmd.error(
+                    ErrorKind::MissingRequiredArgument,
+                    "either a subcommand or main arguments are required",
+                )
+                .exit();
             };
+
+            main_args.validate(cmd);
 
             main_args.try_into().map(Command::Main)
         }

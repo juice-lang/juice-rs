@@ -226,11 +226,11 @@ impl CompilationTask {
     ) -> DriverResult<Self> {
         let executable_path = env::current_exe()?;
 
-        let action_string = match action {
-            Action::DumpParse => "--dump-parse",
-            Action::DumpAst => "--dump-ast",
-            Action::DumpIr | Action::EmitIr => "--emit-ir",
-            Action::EmitObject | Action::EmitExecutable => "--emit-object",
+        let (action_string, json) = match action {
+            Action::DumpParse { json } => ("--dump-parse", json.then_some("--json")),
+            Action::DumpAst { json } => ("--dump-ast", json.then_some("--json")),
+            Action::DumpIr | Action::EmitIr => ("--emit-ir", None),
+            Action::EmitObject | Action::EmitExecutable => ("--emit-object", None),
         };
 
         let arguments = vec![
@@ -242,6 +242,7 @@ impl CompilationTask {
             output_path.as_os_str(),
         ]
         .into_iter()
+        .chain(json.map(OsStr::new))
         .map(OsString::from)
         .collect();
 

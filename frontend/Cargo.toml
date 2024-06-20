@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 ariadne = { workspace = true }
 chumsky = { workspace = true }
+colored_json = "5.0.0"
 derive-where = "1.2.7"
 derive_more = { workspace = true }
 itertools = { workspace = true }
@@ -15,3 +16,4 @@ juice-core = { workspace = true }
 juice-macros = { workspace = true }
 lasso = "0.7.2"
 num-bigint = "0.4.4"
+serde_json = "1.0.117"

@@ -8,6 +8,8 @@ use juice_macros::Diagnostic;
 pub enum StaticDiagnostic {
     #[diag(error = "Error while doing IO: {}")]
     IoError(#[diag(into)] Colored<String>),
+    #[diag(error = "Error while serializing JSON: {}")]
+    JsonError(#[diag(into)] Colored<String>),
 }
 
 #[derive(Debug, Clone, Diagnostic)]

@@ -12,4 +12,6 @@ chumsky = { workspace = true }
 derive_more = { workspace = true }
 in_definite = "1.0.0"
 itertools = { workspace = true }
+serde = { version = "1.0.203", features = ["derive", "rc"] }
+serde-tuple-vec-map = "1.0.1"
 thousands = "0.2.0"

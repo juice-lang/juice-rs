@@ -8,12 +8,15 @@ use crate::diag::{StaticDiagnostic, StaticDiagnosticReport};
 pub enum Error {
     #[from]
     Io(io::Error),
+    #[from]
+    Json(serde_json::Error),
 }
 
 impl Error {
     pub fn diagnose(self) {
         let diagnostic = match self {
             Self::Io(err) => StaticDiagnostic::io_error(err.to_string()),
+            Self::Json(err) => StaticDiagnostic::json_error(err.to_string()),
         };
 
         StaticDiagnosticReport::new(diagnostic).diagnose();
