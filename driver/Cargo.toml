@@ -15,6 +15,7 @@ color-print = "0.3.6"
 derive_more = { workspace = true }
 juice-core = { workspace = true }
 juice-frontend = { workspace = true }
+replace_with = "0.1.7"
 tempfile = "3.10.1"
 tokio = { version = "1.36.0", features = ["full"] }
 which = "6.0.0"
