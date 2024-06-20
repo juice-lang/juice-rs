@@ -2,11 +2,12 @@ use std::{
     borrow::Cow,
     ffi::OsStr,
     fs::File,
-    io::{self, Write},
+    io,
     path::{self, PathBuf},
 };
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand};
+use juice_core::OutputStream;
 use juice_frontend::{RunnerAction as FrontendAction, RunnerArgs as FrontendArgs};
 
 use crate::driver::{Error as DriverError, MainAction, MainArgs, Result as DriverResult};
@@ -30,7 +31,7 @@ pub enum OutputFilePath {
 }
 
 impl OutputFilePath {
-    pub fn try_into_stream(self) -> DriverResult<Box<dyn Write>> {
+    pub fn try_into_stream(self) -> DriverResult<Box<dyn OutputStream>> {
         match self {
             Self::Stdout => Ok(Box::new(io::stdout())),
             Self::File(path) => Ok(Box::new(File::create(path)?)),

@@ -1,8 +1,9 @@
 use std::{
     fmt::{self, Debug, Formatter},
-    io::Write,
     path::PathBuf,
 };
+
+use juice_core::{dump::ToDump, OutputStream};
 
 use crate::{
     diag::DiagnosticEngine,
@@ -29,7 +30,7 @@ pub enum Action {
 
 pub struct Args {
     pub input_filepath: PathBuf,
-    pub output_stream: Box<dyn Write>,
+    pub output_stream: Box<dyn OutputStream>,
     pub action: Action,
 }
 
@@ -74,11 +75,11 @@ impl Runner {
 
         let mut parser = Parser::new(source);
 
-        let stmt = parser.parse_stmt(&diagnostics)?;
+        let stmts = parser.parse_stmt_list(&diagnostics)?;
 
-        if let Some(stmt) = stmt {
+        if let Some(stmts) = stmts {
             if self.args.action == Action::DumpParse {
-                writeln!(self.args.output_stream, "{}", stmt)?;
+                stmts.to_dump().write(self.args.output_stream.as_mut())?;
 
                 check_error!(diagnostics);
 

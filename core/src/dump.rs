@@ -1,14 +1,14 @@
-use std::{
-    fmt::{Display, Formatter, Result as FmtResult},
-    sync::Arc,
-};
+use std::{io, sync::Arc};
 
 use ariadne::{Color, Fmt as _};
 use derive_more::From;
 use itertools::Itertools as _;
 use thousands::{digits::ASCII_HEXADECIMAL, Separable as _, SeparatorPolicy};
 
-use crate::diag::{ColorExt as _, ColorGenerator};
+use crate::{
+    diag::{ColorExt as _, ColorGenerator},
+    OutputStream,
+};
 
 const UNDERSCORE_HEX_SEPARATOR: SeparatorPolicy = SeparatorPolicy {
     separator: "_",
@@ -34,12 +34,12 @@ impl DumpField<'_> {
         matches!(self, Self::List(_) | Self::Dump(_))
     }
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, colors: ColorGenerator) -> FmtResult {
+    fn write_impl(&self, stream: &mut dyn OutputStream, indentation: usize, colors: ColorGenerator) -> io::Result<()> {
         let indent_str = "  ".repeat(indentation);
 
         match self {
-            Self::Bool(v) => write!(f, "{v}"),
-            Self::Int(v) => write!(f, "{v}"),
+            Self::Bool(v) => write!(stream, "{v}"),
+            Self::Int(v) => write!(stream, "{v}"),
             Self::BigInt(v) => {
                 let (first, rest) = v.split_last().unwrap();
 
@@ -49,28 +49,28 @@ impl DumpField<'_> {
                     f(&format!("{part:016x}").separate_by_policy(UNDERSCORE_HEX_SEPARATOR))
                 });
 
-                write!(f, "0x{first}_{rest}")?;
+                write!(stream, "0x{first}_{rest}")?;
 
                 Ok(())
             }
-            Self::Float(v) => write!(f, "{v}"),
-            Self::Char(c) => write!(f, "{c:?}"),
-            Self::String(s) => write!(f, "{s:?}"),
-            Self::ArcStr(s) => write!(f, "{s:?}"),
+            Self::Float(v) => write!(stream, "{v}"),
+            Self::Char(c) => write!(stream, "{c:?}"),
+            Self::String(s) => write!(stream, "{s:?}"),
+            Self::ArcStr(s) => write!(stream, "{s:?}"),
             Self::List(items) => {
-                writeln!(f, "[")?;
+                writeln!(stream, "[")?;
 
                 for item in items {
-                    write!(f, "{indent_str}  ")?;
+                    write!(stream, "{indent_str}  ")?;
 
-                    item.display(f, indentation + 1, colors.clone())?;
+                    item.write_impl(stream, indentation + 1, colors.clone())?;
 
-                    writeln!(f, ",")?;
+                    writeln!(stream, ",")?;
                 }
 
-                write!(f, "{indent_str}]")
+                write!(stream, "{indent_str}]")
             }
-            Self::Dump(dump) => dump.display(f, indentation, colors),
+            Self::Dump(dump) => dump.write_impl(stream, indentation, colors),
         }
     }
 }
@@ -104,49 +104,54 @@ impl<'src> Dump<'src> {
         self
     }
 
-    fn display(&self, f: &mut Formatter<'_>, indentation: usize, mut colors: ColorGenerator) -> FmtResult {
+    fn write_impl(
+        &self,
+        stream: &mut dyn OutputStream,
+        indentation: usize,
+        mut colors: ColorGenerator,
+    ) -> io::Result<()> {
         let is_multiline = self.fields.len() > 2 || self.fields.iter().any(|(_, field)| field.is_multiline());
 
         let indent_str = "  ".repeat(indentation);
 
-        let color = if self.is_error {
-            Color::error_color()
+        let color = if !stream.is_terminal() {
+            None
+        } else if self.is_error {
+            Some(Color::error_color())
         } else {
-            colors.next()
+            Some(colors.next())
         };
 
-        write!(f, "{}", format!("{}(", self.name).fg(color))?;
+        write!(stream, "{}", format!("{}(", self.name).fg(color))?;
 
         for (i, (name, field)) in self.fields.iter().enumerate() {
             if is_multiline {
-                write!(f, "\n{}  ", indent_str)?;
+                write!(stream, "\n{}  ", indent_str)?;
             } else if i > 0 {
-                write!(f, " ")?;
+                write!(stream, " ")?;
             }
 
-            write!(f, "{} ", format!("{}:", name).fg(color))?;
+            write!(stream, "{} ", format!("{}:", name).fg(color))?;
 
-            field.display(f, indentation + 1, colors.clone())?;
+            field.write_impl(stream, indentation + 1, colors.clone())?;
 
             if is_multiline || i + 1 < self.fields.len() {
-                write!(f, "{}", ",".fg(color))?;
+                write!(stream, "{}", ",".fg(color))?;
             }
         }
 
         if is_multiline {
-            write!(f, "\n{}", indent_str)?;
+            write!(stream, "\n{}", indent_str)?;
         }
 
-        write!(f, "{}", ")".fg(color))?;
+        write!(stream, "{}", ")".fg(color))?;
 
         Ok(())
     }
-}
 
-impl Display for Dump<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        self.display(f, 0, ColorGenerator::default())?;
-        writeln!(f)
+    pub fn write(&self, stream: &mut dyn OutputStream) -> io::Result<()> {
+        self.write_impl(stream, 0, ColorGenerator::default())?;
+        writeln!(stream)
     }
 }
 

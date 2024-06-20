@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Display, Formatter, Result as FmtResult},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use derive_where::derive_where;
 use juice_core::dump::{Dump, ToDump};
@@ -283,11 +280,5 @@ impl<'src, M: 'src + SourceManager> Expr<'src, M> {
 impl<'src, M: 'src + SourceManager> ToDump<'src> for Expr<'src, M> {
     fn to_dump(&self) -> Dump<'src> {
         self.kind.to_dump()
-    }
-}
-
-impl<M: SourceManager> Display for Expr<'_, M> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.to_dump())
     }
 }

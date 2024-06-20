@@ -49,6 +49,8 @@ pub enum DiagnosticContextNote<'src> {
     MaybePrefixOperandLocation,
     #[diag(note = "Statement expected here")]
     ExpectedStatementLocation,
+    #[diag(note = "Statement separator expected here")]
+    ExpectedStatementSeparatorLocation,
     #[diag(note = "In this variable declaration")]
     ContainingVarDeclLocation,
     #[diag(note = "Variable initializer expected after this `{}`")]
@@ -108,6 +110,11 @@ pub enum DiagnosticNote<'src> {
     },
     #[diag(note = "Prefix operators cannot be separated from their operand")]
     ExpectedPrefixOperator,
+    #[diag(note = "Consecutive statements on the same line must be separated by a `{}`")]
+    UnseparatedStatements {
+        #[diag(into, default = ';')]
+        separator: Colored<char>,
+    },
     #[diag(unreachable)]
     _Unreachable(Infallible, PhantomData<&'src ()>),
 }

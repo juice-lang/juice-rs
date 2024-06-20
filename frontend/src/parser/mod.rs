@@ -14,7 +14,7 @@ use chumsky::{
 };
 use derive_where::derive_where;
 use juice_core::parser_ext::ParserExt as _;
-use stmt::StmtParser;
+use stmt::StmtListParser;
 
 pub use self::lexer::Lexer;
 use self::{
@@ -22,7 +22,7 @@ use self::{
     lexer::{Tok, TokenKind},
 };
 use crate::{
-    ast::{decl::Decl, expr::Expr, stmt::Stmt},
+    ast::{decl::Decl, expr::Expr, stmt::StmtList},
     diag::{Diagnostic, DiagnosticConsumer, DiagnosticContextNote, DiagnosticEngine},
     source_loc::SourceRange,
     source_manager::{Source, SourceManager},
@@ -82,7 +82,7 @@ where
     'src: 'lex,
 {
     decl_parser: OnceRecursiveParser<'src, 'lex, M, Decl<'src, M>>,
-    stmt_parser: OnceRecursiveParser<'src, 'lex, M, Stmt<'src, M>>,
+    stmt_list_parser: OnceRecursiveParser<'src, 'lex, M, StmtList<'src, M>>,
     expr_parser: OnceRecursiveParser<'src, 'lex, M, Expr<'src, M>>,
 }
 
@@ -101,16 +101,16 @@ impl<'src, M: 'src + SourceManager> Parser<'src, M> {
         parser
     }
 
-    pub fn parse_stmt<C: DiagnosticConsumer<'src, M>>(
+    pub fn parse_stmt_list<C: DiagnosticConsumer<'src, M>>(
         &mut self,
         diagnostics: &DiagnosticEngine<'src, M, C>,
-    ) -> Result<Option<Stmt<'src, M>>, C::Error> {
+    ) -> Result<Option<StmtList<'src, M>>, C::Error> {
         let parser_input = Stream::from_iter((&mut self.lexer).map(|t| (t.kind, t.source_range)))
             .boxed()
             .spanned(self.source.get_eof_range());
 
         let (stmt, errors) = {
-            StmtParser::parser(&ParserCache::default())
+            StmtListParser::parser(&ParserCache::default())
                 .padded_by(<NewlinesParser>::parser())
                 .map_err_with_span(|_, mut range| {
                     let start_loc = range.start_loc();

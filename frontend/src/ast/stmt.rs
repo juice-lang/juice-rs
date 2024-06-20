@@ -1,5 +1,3 @@
-use std::fmt::{Display, Formatter, Result as FmtResult};
-
 use derive_where::derive_where;
 use juice_core::dump::{Dump, ToDump};
 
@@ -10,7 +8,6 @@ use crate::{source_loc::SourceRange, source_manager::SourceManager};
 pub enum StmtKind<'src, M: 'src + SourceManager> {
     Decl(Decl<'src, M>),
     Expr(Expr<'src, M>),
-    Error,
 }
 
 impl<'src, M: 'src + SourceManager> StmtKind<'src, M> {
@@ -24,7 +21,6 @@ impl<'src, M: 'src + SourceManager> ToDump<'src> for StmtKind<'src, M> {
         match self {
             Self::Decl(decl) => decl.to_dump(),
             Self::Expr(expr) => Dump::new("ExprStmt").with_field("expr", expr.to_dump()),
-            Self::Error => Dump::new_error("ErrorStmt"),
         }
     }
 }
@@ -69,8 +65,25 @@ impl<'src, M: 'src + SourceManager> ToDump<'src> for Stmt<'src, M> {
     }
 }
 
-impl<M: SourceManager> Display for Stmt<'_, M> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.to_dump())
+#[derive_where(Debug, Clone)]
+pub struct StmtList<'src, M: 'src + SourceManager> {
+    pub stmts: Vec<Stmt<'src, M>>,
+    pub has_trailing_semicolon: bool,
+}
+
+impl<'src, M: 'src + SourceManager> StmtList<'src, M> {
+    pub fn new(stmts: Vec<Stmt<'src, M>>, has_trailing_semicolon: bool) -> Self {
+        Self {
+            stmts,
+            has_trailing_semicolon,
+        }
+    }
+}
+
+impl<'src, M: 'src + SourceManager> ToDump<'src> for StmtList<'src, M> {
+    fn to_dump(&self) -> Dump<'src> {
+        Dump::new("StmtList")
+            .with_field("stmts", self.stmts.iter().map(ToDump::to_dump).collect::<Vec<_>>())
+            .with_field("has_trailing_semicolon", self.has_trailing_semicolon)
     }
 }

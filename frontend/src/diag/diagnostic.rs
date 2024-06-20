@@ -96,6 +96,13 @@ pub enum Diagnostic<'src> {
     UnexpectedBinaryOperator,
     #[diag(error = "Expected statement {}")]
     ExpectedStatement(&'static str),
+    #[diag(error = "Expected newline or `{}` to separate statements, but found `{}`")]
+    UnseparatedStatements {
+        #[diag(into, default = ';')]
+        separator: Colored<char>,
+        #[diag(into)]
+        found: Colored<&'src str>,
+    },
     #[diag(error = "Expected variable name in declaration")]
     ExpectedVarDeclName,
 }
